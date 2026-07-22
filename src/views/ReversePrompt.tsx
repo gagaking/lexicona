@@ -1105,21 +1105,44 @@ isEdited,
                                 )}
                               </button>
                             )}
+                            <div className="relative inline-flex items-center">
                             <button
-                              onClick={() => copyText(getCombinedPrompt(p), p.id + "-prompt")}
+                              onClick={() => {
+                                const txt = (promptCopyVersion[p.id] === "depth" ? DEPTH_REF_PREFIX + "\n" : "") + (getCombinedPrompt(p) || "");
+                                copyText(txt, p.id + "-prompt");
+                              }}
                               className="flex items-center gap-1 text-[10px] text-[#1E1E1E] bg-[#FAFAFA] hover:bg-[#1E1E1E] hover:text-white px-2 py-1 border border-[#E0E0E0] rounded-none font-medium whitespace-nowrap shrink-0 cursor-pointer transition-all duration-150"
                               title="复制提示词"
                             >
                               {copiedId === p.id + "-prompt" ? (
-                                <>
-                                  <Check className="w-3 h-3 text-green-600" /> 已复制
-                                </>
+                                <><Check className="w-3 h-3 text-green-600" /> 已复制</>
                               ) : (
-                                <>
-                                  <Copy className="w-3 h-3" /> 复制提示词
-                                </>
+                                <><Copy className="w-3 h-3" /> {promptCopyVersion[p.id] === "depth" ? "深度图引用版" : "复制提示词"}</>
                               )}
                             </button>
+                            <button
+                              onClick={() => setOpenDropdownId(openDropdownId === p.id ? null : p.id)}
+                              className="flex items-center justify-center w-4 h-4 ml-0.5 text-[#7A7A7A] hover:text-[#1E1E1E] transition-colors"
+                            >
+                              <ChevronDown className="w-3 h-3" />
+                            </button>
+                            {openDropdownId === p.id && (
+                              <div className="absolute top-full left-0 mt-1 bg-white border border-[#E0E0E0] shadow-lg z-50 min-w-[100px] rounded-none">
+                                <button
+                                  onClick={() => { setPromptCopyVersion(prev => ({ ...prev, [p.id]: "normal" })); setOpenDropdownId(null); }}
+                                  className="block w-full text-left px-3 py-1.5 text-[11px] hover:bg-gray-50 text-[#1E1E1E] whitespace-nowrap"
+                                >
+                                  复制提示词
+                                </button>
+                                <button
+                                  onClick={() => { setPromptCopyVersion(prev => ({ ...prev, [p.id]: "depth" })); setOpenDropdownId(null); }}
+                                  className="block w-full text-left px-3 py-1.5 text-[11px] hover:bg-gray-50 text-[#1E1E1E] whitespace-nowrap"
+                                >
+                                  深度图引用版
+                                </button>
+                              </div>
+                            )}
+                          </div>
                             </div>
                           </div>
                           <div className="grid grid-cols-2 gap-x-3 gap-y-3 mt-3 select-text">
