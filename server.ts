@@ -1,5 +1,20 @@
 import express from "express";
 import path from "path";
+import { existsSync } from "fs";
+
+function findProjectRoot(): string {
+  const markers = ["gpu_env", "models", "depth-anything-v2", "run_depth_anything.py"];
+  const candidates = [process.cwd()];
+  try {
+    const exeDir = path.dirname(process.execPath);
+    candidates.push(path.resolve(exeDir, "..", ".."));
+  } catch (_) {}
+  for (const candidate of candidates) {
+    if (markers.some((m) => existsSync(path.join(candidate, m)))) return candidate;
+  }
+  return process.cwd();
+}
+const ROOT = process.env.LEXICONA_ROOT || findProjectRoot();
 
 async function startServer() {
   const app = express();
@@ -52,7 +67,7 @@ async function startServer() {
         return res.status(400).json({ error: "Missing image data" });
       }
 
-      const defaultModel = modelPath && modelPath !== "/models/depth_anything_v2_vitl.pth" ? modelPath : path.join(process.cwd(), "models", "depth_anything_v2_vitl.pth");
+      const defaultModel = modelPath && modelPath !== "/models/depth_anything_v2_vitl.pth" ? modelPath : path.join(ROOT, "models", "depth_anything_v2_vitl.pth");
       const activeModelPath = defaultModel;
       if (!existsSync(activeModelPath)) {
         return res.status(400).json({ error: "未找到深度估计模型文件: " + activeModelPath });
@@ -66,14 +81,14 @@ async function startServer() {
       
       const buffer = Buffer.from(base64Data, "base64");
       const tempId = Date.now() + "_" + Math.floor(Math.random() * 1000);
-      const tempInputPath = path.join(process.cwd(), `temp_input_${tempId}.jpg`);
-      const tempOutputPath = path.join(process.cwd(), `temp_output_${tempId}.png`);
+      const tempInputPath = path.join(ROOT, `temp_input_${tempId}.jpg`);
+      const tempOutputPath = path.join(ROOT, `temp_output_${tempId}.png`);
       
       writeFileSync(tempInputPath, buffer);
       
       // Run the Python script
-      const pythonPath = path.join(process.cwd(), "gpu_env", "Scripts", "python.exe");
-      const scriptPath = path.join(process.cwd(), "run_depth_anything.py");
+      const pythonPath = path.join(ROOT, "gpu_env", "Scripts", "python.exe");
+      const scriptPath = path.join(ROOT, "run_depth_anything.py");
       const cmd = `"${pythonPath}" "${scriptPath}" --image "${tempInputPath}" --model "${activeModelPath}" --output "${tempOutputPath}"`;
       console.log(`Executing depth map command: ${cmd}`);
       
@@ -115,8 +130,8 @@ async function startServer() {
   app.get("/api/download-offline", async (req, res) => {
     const { existsSync } = await import("fs");
     const { exec } = await import("child_process");
-    const offlinePathDist = path.join(process.cwd(), "dist", "PromptEagle_Offline.html");
-    const offlinePathPublic = path.join(process.cwd(), "public", "PromptEagle_Offline.html");
+    const offlinePathDist = path.join(ROOT, "dist", "PromptEagle_Offline.html");
+    const offlinePathPublic = path.join(ROOT, "public", "PromptEagle_Offline.html");
     
     // In development, or if file is missing, build it dynamically
     if (process.env.NODE_ENV !== "production" || (!existsSync(offlinePathDist) && !existsSync(offlinePathPublic))) {
@@ -154,7 +169,7 @@ async function startServer() {
     });
     app.use(vite.middlewares);
 } else {
-   const distPath = process.env.LEXICONA_DIST || path.join(process.cwd(), "dist");
+   const distPath = process.env.LEXICONA_DIST || path.join(ROOT, "dist");
     app.get("*", (req, res) => {
       const { readFileSync, existsSync } = require("fs");
       let filePath = path.join(distPath, req.path === "/" ? "index.html" : req.path.substring(1));
