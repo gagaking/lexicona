@@ -65,10 +65,17 @@ function startServer() {
    // Set project root for depth map and other resource paths
    if (app.isPackaged) {
      const exeDir = path.dirname(app.getPath('exe'));
-     const projectRoot = path.resolve(exeDir, '..', '..');
-     if (fs.existsSync(path.join(projectRoot, 'gpu_env'))) {
-       process.env.LEXICONA_ROOT = projectRoot;
-       console.log('[Server] Derived project root from exe path:', projectRoot);
+     // Check exe directory first (resources placed alongside exe)
+     if (fs.existsSync(path.join(exeDir, 'gpu_env'))) {
+       process.env.LEXICONA_ROOT = exeDir;
+       console.log('[Server] Using exe directory as project root:', exeDir);
+     } else {
+       // Fallback: project root 2 levels up from win-unpacked
+       const projectRoot = path.resolve(exeDir, '..', '..');
+       if (fs.existsSync(path.join(projectRoot, 'gpu_env'))) {
+         process.env.LEXICONA_ROOT = projectRoot;
+         console.log('[Server] Derived project root from exe path:', projectRoot);
+       }
      }
    }
 

@@ -4,7 +4,12 @@ import { existsSync } from "fs";
 
 function findProjectRoot(): string {
   const markers = ["gpu_env", "models", "depth-anything-v2", "run_depth_anything.py"];
-  const candidates = [process.cwd()];
+  const candidates: string[] = [];
+  try {
+    const exeDir = path.dirname(process.execPath);
+    candidates.push(exeDir);
+  } catch (_) {}
+  candidates.push(process.cwd());
   try {
     const exeDir = path.dirname(process.execPath);
     candidates.push(path.resolve(exeDir, "..", ".."));
@@ -13,8 +18,7 @@ function findProjectRoot(): string {
     if (markers.some((m) => existsSync(path.join(candidate, m)))) return candidate;
   }
   return process.cwd();
-}
-const ROOT = process.env.LEXICONA_ROOT || findProjectRoot();
+}const ROOT = process.env.LEXICONA_ROOT || findProjectRoot();
 
 async function startServer() {
   const app = express();
@@ -88,7 +92,16 @@ async function startServer() {
       
       // Run the Python script
       const pythonPath = path.join(ROOT, "gpu_env", "Scripts", "python.exe");
-      const scriptPath = path.join(ROOT, "run_depth_anything.py");
+      let scriptPath = path.join(ROOT, "run_depth_anything.py");
+      if (!existsSync(scriptPath)) {
+        try {
+          const rp = (process as any).resourcesPath;
+          if (rp) {
+            const rpScript = path.join(rp, "run_depth_anything.py");
+            if (existsSync(rpScript)) scriptPath = rpScript;
+          }
+        } catch (_) {}
+      }
       const cmd = `"${pythonPath}" "${scriptPath}" --image "${tempInputPath}" --model "${activeModelPath}" --output "${tempOutputPath}"`;
       console.log(`Executing depth map command: ${cmd}`);
       
