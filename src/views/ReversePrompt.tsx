@@ -556,9 +556,13 @@ isEdited,
         if (!text) return "";
         return `[${label}: ${text}]`;
       })
-      .filter((x) => x)
-      .join("; ");
-    return combined || p.prompt;
+     .filter((x) => x)
+     .join("; ");
+    let result = combined || p.prompt;
+    if (p.negativePrompt) {
+      result += " --neg " + p.negativePrompt;
+    }
+    return result;
   };
 
   const copyText = (text: string, id: string) => {
@@ -832,7 +836,7 @@ isEdited,
             onClick={handleDownloadTemplate}
             className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-gray-50 text-[#1E1E1E] rounded-none transition-colors border border-[#E0E0E0] text-sm font-medium"
           >
-            <Download className="w-4 h-4" /> 下载模板
+            <Download className="w-4 h-4" /> 下载批量反推模板
           </button>
           <button
             onClick={() => setShowExportModal(true)}
@@ -955,10 +959,10 @@ isEdited,
 
                   {/* View Toggler Pill */}
                   {p.depthMapUrl && (
-                    <div className="absolute bottom-2 left-1/2 transform -translate-x-1/2 bg-black/85 backdrop-blur-sm px-1 py-1 rounded-full flex gap-1 z-20 shadow-lg border border-white/10 select-none">
+                    <div className="absolute bottom-2 left-1/2 transform -translate-x-1/2 bg-black/85 backdrop-blur-sm px-1 py-[3px] rounded-full flex gap-1 z-20 shadow-lg border border-white/10 select-none">
                       <button
                         onClick={() => toggleActiveView(p.id, "original")}
-                        className={`px-3 py-1 rounded-full text-[10px] font-sans font-medium transition-colors cursor-pointer ${
+                        className={`px-2.5 py-[3px] rounded-full text-[10px] font-sans font-medium transition-colors cursor-pointer ${
                           (!p.activeView || p.activeView === "original")
                             ? "bg-white text-black font-semibold"
                             : "text-white/80 hover:text-white hover:bg-white/10"
@@ -968,7 +972,7 @@ isEdited,
                       </button>
                       <button
                         onClick={() => toggleActiveView(p.id, "depth")}
-                        className={`px-3 py-1 rounded-full text-[10px] font-sans font-medium transition-colors cursor-pointer ${
+                        className={`px-2.5 py-[3px] rounded-full text-[10px] font-sans font-medium transition-colors cursor-pointer ${
                           p.activeView === "depth"
                             ? "bg-white text-black font-semibold"
                             : "text-white/80 hover:text-white hover:bg-white/10"
