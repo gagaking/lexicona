@@ -560,10 +560,13 @@ export async function unloadOllamaModel(config: AIConfig) {
   }
 }
 
-export async function generatePromptFromImage(base64Data: string, mimeType: string, imageUrl: string | undefined, config: AIConfig, abortSignal?: AbortSignal) {
+export async function generatePromptFromImage(base64Data: string, mimeType: string, imageUrl: string | undefined, config: AIConfig, abortSignal?: AbortSignal, editInstruction?: string) {
   try {
     let resultText = "";
     const provider = config.reversePromptProvider || config.provider;
+    const userText = editInstruction
+      ? SYSTEM_PROMPT + `\n\n额外要求：在进行上述分析的同时，请将以下修改应用到输出的内容当中：${editInstruction}\n请确保输出完全符合上述 JSON Schema 结构。`
+      : SYSTEM_PROMPT;
     
     if (provider === 'google') {
       const apiKey = config.googleApiKey || process.env.GEMINI_API_KEY;
@@ -576,7 +579,7 @@ export async function generatePromptFromImage(base64Data: string, mimeType: stri
         body: JSON.stringify({
           contents: [{ 
             parts: [
-              { text: SYSTEM_PROMPT },
+              { text: userText },
               { inline_data: { mime_type: mimeType, data: base64Data } }
             ] 
           }],
@@ -604,7 +607,7 @@ export async function generatePromptFromImage(base64Data: string, mimeType: stri
         body: JSON.stringify({
           model: config.reversePromptOllamaModel || config.ollamaModel || 'llava',
           format: "json",
-          messages: [{ role: "user", content: SYSTEM_PROMPT, images: [base64Data] }],
+          messages: [{ role: "user", content: userText, images: [base64Data] }],
           stream: false,
           options: { temperature: 0.1 } // Removed num_gpu: 999 which causes 400s on some cloud providers
         })
@@ -648,7 +651,7 @@ export async function generatePromptFromImage(base64Data: string, mimeType: stri
                 {
                   role: 'user',
                   content: [
-                    { type: 'text', text: SYSTEM_PROMPT },
+                    { type: 'text', text: userText },
                     { type: 'image_url', image_url: { url: payloadImageUrl } }
                   ]
                 }

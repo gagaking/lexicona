@@ -1,0 +1,43 @@
+appId: com.lexicona.app
+productName: 辞谱 Lexicona
+copyright: Copyright © 2026
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - electron/**/*
+  - dist/**/*
+  - build/**/*
+  - package.json
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: build/icon.ico
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  runAfterFinish: true
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  license: LICENSE
+
+extraResources:
+  - from: depth-anything-v2
+    to: depth-anything-v2
+    filter:
+      - "**/*"
+  - from: run_depth_anything.py
+    to: run_depth_anything.py
+
+publish: null
+
+electronDist: node_modules/electron/dist

@@ -1,5 +1,5 @@
 {
-  "name": "react-example",
+  "name": "lexicona",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -9,7 +9,11 @@
     "start": "node dist/server.cjs",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "electron-dev": "electron .",
+    "build:electron": "npm run build && electron-builder",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
   },
   "dependencies": {
     "@emotion/is-prop-valid": "^1.4.0",
@@ -45,6 +49,9 @@
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.3",
-    "vite-plugin-singlefile": "^2.3.3"
-  }
+    "vite-plugin-singlefile": "^2.3.3",
+    "electron": "^32.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "main": "electron/main.js"
 }

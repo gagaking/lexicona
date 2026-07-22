@@ -25,6 +25,7 @@ def main():
         except ImportError:
             # Maybe it's in the same directory or we can import it from HuggingFace
             sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+            sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "depth-anything-v2"))
             from depth_anything_v2.dpt import DepthAnythingV2
 
         # Model configs for Depth Anything V2

@@ -6,8 +6,9 @@ import {
   Trash2,
   FileSpreadsheet,
   Sparkles,
+  Play,
   UploadCloud,
-  Copy,
+  Copy, ChevronDown,
   Check,
   RefreshCw,
   Download,
@@ -20,7 +21,6 @@ import { saveAs } from "file-saver";
 import { v4 as uuidv4 } from "uuid";
 import {
   generatePromptFromImage,
-  editPromptWithSubject,
   unloadOllamaModel,
   isIgnorableValue,
 } from "../services/reversePromptService";
@@ -88,6 +88,13 @@ export function ReversePrompt({ onClose }: { onClose: () => void }) {
   const [isProcessing, setIsProcessing] = useState<Record<string, boolean>>({});
   const [isProcessingDepth, setIsProcessingDepth] = useState<Record<string, boolean>>({});
   const [isClearing, setIsClearing] = useState(false);
+
+// 深度图引用版前缀
+const DEPTH_REF_PREFIX = "以深度图作为主要空间结构参考，保持原始空间关系、物体位置、比例关系、透视关系、镜头视角和整体构图，不要改变主体的几何结构和空间布局，仅调整主体外观、材质、风格、光影、色彩和环境细节。";
+
+  const [promptCopyVersion, setPromptCopyVersion] = useState<Record<string, "normal" | "depth">>({});
+  const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
+
 
   const toggleActiveView = (id: string, view: 'original' | 'depth') => {
     setPairs((prev) =>
@@ -207,7 +214,8 @@ export function ReversePrompt({ onClose }: { onClose: () => void }) {
     }
   };
   const [isDownloading, setIsDownloading] = useState(false);
-  const [subject, setSubject] = useState("");
+ const [subject, setSubject] = useState("");
+  const [subjectEnabled, setSubjectEnabled] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
 
@@ -272,23 +280,30 @@ export function ReversePrompt({ onClose }: { onClose: () => void }) {
       }
     }
 
-    // Parse Images
+   // Parse Images
     const imageFiles = filesArray.filter((f) => f.type.startsWith("image/"));
     if (imageFiles.length > 0) {
-      newItems.push(
-        ...imageFiles.map((file) => ({
+      const imageItems = await Promise.all(imageFiles.map(async (file) => {
+        const dataUrl = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.readAsDataURL(file);
+        });
+        return {
           id: uuidv4(),
           image: file,
           imageName: file.name,
           imageUrl: URL.createObjectURL(file), // for display
+          imageDataUrl: dataUrl,
           prompt: "",
           styleName: "待分析...",
-        })),
-      );
+        };
+      }));
+      newItems.push(...imageItems);
     }
 
     if (newItems.length > 0) {
-      setPairs((prev) => [...prev, ...newItems]);
+      setPairs((prev) => [...newItems, ...prev]);
     }
   }, []);
 
@@ -390,18 +405,14 @@ export function ReversePrompt({ onClose }: { onClose: () => void }) {
         mimeType,
         item.isUrlImport ? item.imageUrl : undefined,
         aiConfig,
-        controller.signal,
+       controller.signal,
+        subjectEnabled && subject.trim() ? subject : undefined,
       );
 
       let finalPrompt = prompt;
       let isEdited = false;
-      if (subject.trim() && !prompt.startsWith("错误")) {
-        const edited = await editPromptWithSubject(prompt, subject, aiConfig);
-        if (!edited.startsWith("错误")) {
-          finalPrompt = edited;
-          isEdited = true;
-        }
-      }
+      isEdited = subjectEnabled && subject.trim() ? true : false;
+      finalPrompt = prompt;
 
       setPairs((prev) =>
         prev.map((p) =>
@@ -435,7 +446,7 @@ isEdited,
           ),
         );
         setApiError(
-          `API 运行失败！\n\n提示信息：${e.message}\n\n请点击右上角【模型选择】确认选中的 API 提供商及具体的模型，并在【设置】中配置正确的 API Key。`,
+          `API 运行失败！\n\n提示信息：${e.message}\n\n请检查【设置】中 API 配置是否正确，确认 API 提供商及模型已正确配置。`,
         );
       }
     } finally {
@@ -728,18 +739,15 @@ isEdited,
             onClick={onClose}
             className="flex items-center text-[#7A7A7A] hover:text-[#1E1E1E] transition-colors py-1.5 px-3 -ml-3 bg-transparent rounded-none hover:bg-gray-50 border border-transparent text-sm font-sans"
           >
-            <ArrowLeft className="w-4 h-4 mr-1.5" /> 返回图库
+            <ArrowLeft className="w-4 h-4 mr-1.5" /> 返回
           </button>
           <h1 className="text-xl font-medium text-[#1E1E1E] flex items-center tracking-tight">
-            AI提示词反推架构师
+            提示词反推
           </h1>
         </div>
-
         <div className="flex items-center gap-3">
+
           <div className="flex items-center gap-2 mr-2 border-r border-[#E0E0E0] pr-4">
-            <label className="text-xs text-[#7A7A7A] font-medium hidden sm:block">
-              模型选择
-            </label>
             <select
               value={aiConfig.reversePromptProvider || aiConfig.provider}
               onChange={(e) =>
@@ -748,7 +756,7 @@ isEdited,
                   reversePromptProvider: e.target.value as any,
                 })
               }
-              className="w-24 text-sm border border-[#E0E0E0] bg-white rounded-none px-2 py-1.5 focus:outline-none focus:border-[#1E1E1E]"
+              className="w-20 text-sm border border-[#E0E0E0] bg-white rounded-none px-1 py-1.5 focus:outline-none focus:border-[#1E1E1E]"
             >
               <option value="google">Google</option>
               <option value="xiaomi">Xiaomi</option>
@@ -762,7 +770,7 @@ isEdited,
                 onChange={(e) =>
                   updateAiConfig({ ...aiConfig, googleModel: e.target.value })
                 }
-                className="w-32 text-sm border border-[#E0E0E0] bg-white rounded-none px-2 py-1.5 focus:outline-none focus:border-[#1E1E1E]"
+                className="w-20 text-sm border border-[#E0E0E0] bg-white rounded-none px-1 py-1.5 focus:outline-none focus:border-[#1E1E1E]"
               >
                 <option value="gemini-2.5-flash">gemini-2.5-flash</option>
                 <option value="gemini-3.5-flash">gemini-3.5-flash</option>
@@ -777,7 +785,7 @@ isEdited,
                   updateAiConfig({ ...aiConfig, xiaomiModel: e.target.value })
                 }
                 placeholder="Xiaomi 模型"
-                className="w-32 text-sm border border-[#E0E0E0] bg-white rounded-none px-2 py-1.5 focus:outline-none focus:border-[#1E1E1E]"
+                className="w-20 text-sm border border-[#E0E0E0] bg-white rounded-none px-1 py-1.5 focus:outline-none focus:border-[#1E1E1E]"
               />
             )}
             {(aiConfig.reversePromptProvider || aiConfig.provider) ===
@@ -796,12 +804,11 @@ isEdited,
                   })
                 }
                 placeholder="Ollama 视觉模型"
-                className="w-32 text-sm border border-[#E0E0E0] bg-white rounded-none px-2 py-1.5 focus:outline-none focus:border-[#1E1E1E]"
+                className="w-20 text-sm border border-[#E0E0E0] bg-white rounded-none px-1 py-1.5 focus:outline-none focus:border-[#1E1E1E]"
               />
             )}
-
             <label className="text-xs text-[#7A7A7A] font-medium ml-2 hidden sm:block">
-              并发数
+              并发
             </label>
             <input
               type="number"
@@ -814,7 +821,7 @@ isEdited,
                   reversePromptConcurrency: parseInt(e.target.value, 10) || 1,
                 })
               }
-              className="w-16 text-sm border border-[#E0E0E0] bg-white rounded-none px-2 py-1.5 focus:outline-none focus:border-[#1E1E1E]"
+              className="w-8 text-sm border border-[#E0E0E0] bg-white rounded-none px-1 py-1.5 focus:outline-none focus:border-[#1E1E1E] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
             />
           </div>
 
@@ -836,7 +843,7 @@ isEdited,
             onClick={handleDownloadTemplate}
             className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-gray-50 text-[#1E1E1E] rounded-none transition-colors border border-[#E0E0E0] text-sm font-medium"
           >
-            <Download className="w-4 h-4" /> 下载批量反推模板
+            <Download className="w-4 h-4" /> 下载批量模板
           </button>
           <button
             onClick={() => setShowExportModal(true)}
@@ -862,9 +869,9 @@ isEdited,
             {isProcessingAll ? (
               <X className="w-4 h-4" />
             ) : (
-              <Sparkles className="w-4 h-4" />
+              <Play className="w-4 h-4" />
             )}
-            {isProcessingAll ? "终止所有任务" : "开始全部反推"}
+            {isProcessingAll ? "终止所有任务" : "开始反推"}
           </button>
         </div>
       </div>
@@ -873,7 +880,18 @@ isEdited,
       <div className="flex-1 overflow-y-auto p-6 z-10 custom-scrollbar">
         <div className="max-w-7xl mx-auto space-y-6">
           {/* Subject replacement bar */}
-          <div className="bg-white border border-[#F0F0F0] rounded-none p-4 flex items-center gap-4 shadow-sm">
+         <div className="bg-white border border-[#F0F0F0] rounded-none p-4 flex items-center gap-4 shadow-sm">
+            <button
+              onClick={() => setSubjectEnabled(!subjectEnabled)}
+              className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${
+                subjectEnabled ? 'bg-[#1E1E1E]' : 'bg-[#D0D0D0]'
+              }`}
+              title={subjectEnabled ? "点击关闭语义替换" : "点击开启语义替换"}
+            >
+              <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${
+                subjectEnabled ? 'translate-x-4' : 'translate-x-0'
+              }`} />
+            </button>
             <div className="flex-1">
               <label className="text-xs text-[#7A7A7A] font-medium mb-1.5 block uppercase tracking-wider">
                 核心主体 / 语义替换
@@ -885,7 +903,7 @@ isEdited,
                 placeholder="在此输入想要替换的主题或添加的描述，例如：'上海主题同款海报'... 这将基于反推架构重写提示词"
                 className="w-full bg-white border border-[#E0E0E0] px-4 py-2.5 text-sm text-[#1E1E1E] placeholder-[#A3A3A3] focus:outline-none focus:border-[#1E1E1E] focus:ring-1 focus:ring-[#1E1E1E] transition-all rounded-none"
               />
-            </div>
+           </div>
             <button
               onClick={() => {
     Object.values(abortControllers.current).forEach((c: any) => c.abort());
@@ -901,6 +919,10 @@ isEdited,
               <Trash2 className="w-5 h-5" />
             </button>
           </div>
+
+          
+          {/* Clear All Button at bottom */}
+          
 
           {/* Empty State */}
           {pairs.length === 0 && (
@@ -954,6 +976,13 @@ isEdited,
                       className="bg-[#1E1E1E] hover:bg-black text-white px-4 py-2 rounded-none text-xs font-semibold disabled:opacity-50 shadow-sm transition-colors cursor-pointer w-[120px] text-center font-sans"
                     >
                       {p.depthMapUrl ? "更新深度图" : "获取深度图"}
+                    </button>
+                    <button
+                      onClick={async ()=>{try{await processImage(p)}catch(e){console.error(e)}try{await getDepthMap(p)}catch(e){console.error(e)}}}
+                      disabled={isProcessing[p.id] || isProcessingDepth[p.id] || p.isProcessingDepth}
+                      className="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-none text-xs font-semibold disabled:opacity-50 shadow-sm transition-colors cursor-pointer w-[120px] text-center font-sans"
+                    >
+                      同析深图
                     </button>
                   </div>
 

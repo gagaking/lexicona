@@ -3,9 +3,20 @@ import path from "path";
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = parseInt(process.env.PORT || "3000");
 
   app.use(express.json({ limit: "50mb" }));
+  
+  // CORS middleware
+  app.use((req, res, next) => {
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+    res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    if (req.method === "OPTIONS") {
+      return res.sendStatus(200);
+    }
+    next();
+  });
 
   // API proxy route for Nvidia
   app.post("/api/proxy/nvidia", async (req, res) => {
@@ -41,7 +52,11 @@ async function startServer() {
         return res.status(400).json({ error: "Missing image data" });
       }
 
-      const activeModelPath = modelPath || "/models/depth_anything_v2_vitl.pth";
+      const defaultModel = modelPath && modelPath !== "/models/depth_anything_v2_vitl.pth" ? modelPath : path.join(process.cwd(), "models", "depth_anything_v2_vitl.pth");
+      const activeModelPath = defaultModel;
+      if (!existsSync(activeModelPath)) {
+        return res.status(400).json({ error: "未找到深度估计模型文件: " + activeModelPath });
+      }
       
       // Clean up base64 prefix
       let base64Data = image;
@@ -57,7 +72,9 @@ async function startServer() {
       writeFileSync(tempInputPath, buffer);
       
       // Run the Python script
-      const cmd = `python3 depth_anything_v2.py --image "${tempInputPath}" --model "${activeModelPath}" --output "${tempOutputPath}"`;
+      const pythonPath = path.join(process.cwd(), "gpu_env", "Scripts", "python.exe");
+      const scriptPath = path.join(process.cwd(), "run_depth_anything.py");
+      const cmd = `"${pythonPath}" "${scriptPath}" --image "${tempInputPath}" --model "${activeModelPath}" --output "${tempOutputPath}"`;
       console.log(`Executing depth map command: ${cmd}`);
       
       await new Promise<void>((resolve, reject) => {
@@ -136,11 +153,29 @@ async function startServer() {
       appType: "spa",
     });
     app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
+} else {
+   const distPath = process.env.LEXICONA_DIST || path.join(process.cwd(), "dist");
     app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
+      const { readFileSync, existsSync } = require("fs");
+      let filePath = path.join(distPath, req.path === "/" ? "index.html" : req.path.substring(1));
+      try {
+        if (existsSync(filePath)) {
+          const content = readFileSync(filePath);
+          const mime = {".html":"text/html",".js":"application/javascript",".css":"text/css",".png":"image/png",".jpg":"image/jpeg",".svg":"image/svg+xml",".ico":"image/x-icon",".json":"application/json",".woff":"font/woff",".woff2":"font/woff2",".ttf":"font/ttf",".map":"application/json"};
+          res.set("Content-Type", mime[path.extname(filePath).toLowerCase()] || "application/octet-stream");
+          res.send(content);
+        } else {
+          filePath = path.join(distPath, "index.html");
+          if (existsSync(filePath)) {
+            res.set("Content-Type", "text/html");
+            res.send(readFileSync(filePath));
+          } else {
+            res.status(404).send("Not Found");
+          }
+        }
+      } catch (e) {
+        res.status(500).send("Server Error");
+      }
     });
   }
 

@@ -11,9 +11,10 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { parseCSV } from "../services/csvParser";
+import { dbStore } from "../lib/db";
 
 export function SettingsModal({ onClose }: { onClose: () => void }) {
-  const { aiConfig, updateAiConfig, addAssets, clearAllCache } =
+  const { aiConfig, updateAiConfig, addAssets, clearAllCache, reversePromptPairs, setReversePromptPairs } =
     useAppContext();
   const [formData, setFormData] = useState(aiConfig);
   const [saved, setSaved] = useState(false);
@@ -48,6 +49,14 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
     ) {
       await clearAllCache();
       alert("缓存已清空并卸载云端表格");
+    }
+  };
+
+  const handleClearReverseCache = async () => {
+    if (confirm("确定要清除所有反推解析记录吗？这将只清除反推历史记录，不会影响图库数据。")) {
+      setReversePromptPairs([]);
+      await dbStore.setReversePromptPairs([]);
+      alert("反推记录已清除");
     }
   };
 
@@ -616,33 +625,31 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                 </div>
               </div>
 
-              {/* Depth Anything V2 Config */}
-              <div className="space-y-4 p-4 border border-[#E0E0E0] bg-white md:col-span-2">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-medium text-[#1E1E1E]">
-                    Depth Anything V2 深度估计模型
-                  </h3>
-                  <span className="text-xs text-[#7A7A7A] font-sans">
-                    本地模型路径配置
-                  </span>
+              
+            </div>
+          </div>
+
+          <div className="border-t border-[#F0F0F0] pt-6">
+            <h2 className="text-base font-medium text-[#1E1E1E] mb-4">缓存管理</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="p-4 border border-[#E0E0E0] bg-[#FAFAFA]">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-medium text-[#1E1E1E]">反推解析记录</span>
+                  <span className="text-xs text-[#7A7A7A] font-sans">{reversePromptPairs.length} 条记录</span>
                 </div>
-                <div>
-                  <label className="block text-xs uppercase tracking-wider text-[#A3A3A3] mb-2 font-sans">
-                    模型文件权重路径 (.pth)
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.depthModelPath || ""}
-                    onChange={(e) =>
-                      setFormData({ ...formData, depthModelPath: e.target.value })
-                    }
-                    placeholder="/models/depth_anything_v2_vitl.pth"
-                    className="w-full bg-white border border-[#E0E0E0] text-[#1E1E1E] text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 p-2.5 outline-none font-sans rounded-none transition-colors"
-                  />
-                  <p className="mt-1 text-xs text-[#A3A3A3] font-sans leading-relaxed">
-                    在您本地运行此应用时，将会加载该绝对路径下的权重文件进行真实深度估计。
-                  </p>
+                <p className="text-xs text-[#A3A3A3] font-sans mb-3">包含图片的反推解析历史记录，包括原图、提示词、深度图等数据。</p>
+                <div className="flex gap-2">
+                  <button onClick={handleClearReverseCache} className="px-4 py-2 text-xs font-sans border border-red-500 text-red-500 hover:bg-red-500 hover:text-white transition-colors rounded-none">清除反推记录</button>
+                  <button onClick={handleClearCache} className="px-4 py-2 text-xs font-sans border border-[#E0E0E0] text-[#7A7A7A] hover:bg-[#1E1E1E] hover:text-white transition-colors rounded-none">清空全部缓存</button>
                 </div>
+              </div>
+              <div className="p-4 border border-[#E0E0E0] bg-[#FAFAFA]">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-medium text-[#1E1E1E]">深度图模型</span>
+                  <span className="text-xs text-[#7A7A7A] font-sans">~1.34 GB</span>
+                </div>
+                <p className="text-xs text-[#A3A3A3] font-sans mb-3">Depth Anything V2 vitl 模型权重文件，位于项目目录 models/ 下。</p>
+                <div className="text-xs text-[#A3A3A3] font-sans">模型路径: {aiConfig.depthModelPath || "未配置"}</div>
               </div>
             </div>
           </div>

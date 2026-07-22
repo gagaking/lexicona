@@ -797,7 +797,7 @@ export function Gallery({ onOpenReverse }: { onOpenReverse?: () => void }) {
       activeView: "original",
     };
 
-    setReversePromptPairs((prev) => [...prev, newPair]);
+    setReversePromptPairs((prev) => [newPair, ...prev]);
     onOpenReverse?.();
 
     try {
@@ -879,6 +879,7 @@ export function Gallery({ onOpenReverse }: { onOpenReverse?: () => void }) {
               >
                 <FileSpreadsheet className="w-3.5 h-3.5 mr-1" /> 导出表格
               </button>
+          <button onClick={() => setGeneratedPrompts([])} className="flex items-center text-xs ml-2 px-3 py-1.5 bg-white border border-red-200 text-red-500 hover:bg-red-50 transition-colors rounded-none"><RefreshCw className="w-3.5 h-3.5 mr-1" /> 清空全部</button>
             </>
           ) : viewMode === "moodboard" ? (
             <>
@@ -935,22 +936,18 @@ export function Gallery({ onOpenReverse }: { onOpenReverse?: () => void }) {
           >
             <Settings className="w-4 h-4 mr-1.5" /> 设置
           </button>
-          <button
-            onClick={() => setGeneratedPrompts([])}
-            title="清空记录"
-            className="flex items-center justify-center px-2.5 py-1.5 text-xs font-sans font-medium bg-transparent text-[#7A7A7A] hover:text-[#1E1E1E] transition-all"
-          >
-            <RefreshCw className="w-4 h-4 mr-1.5" /> 清空记录
-          </button>
+          
         </div>
       </div>
 
       {/* Main Workspace Area (Gallery OR Results) */}
-      <div className="flex-1 bg-transparent relative flex flex-col min-h-0 overflow-hidden">
-        {viewMode === "moodboard" ? (
-          <MoodboardView />
-        ) : (
-          <div className="flex-1 overflow-y-auto custom-scrollbar relative">
+     <div className="flex-1 bg-transparent relative flex flex-col min-h-0 overflow-hidden">
+       {viewMode === "moodboard" ? (
+          <div className="h-full overflow-y-auto custom-scrollbar">
+            <MoodboardView />
+          </div>
+       ) : (
+          <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar relative">
             <div className="max-w-[1600px] mx-auto flex flex-col min-h-full p-4 sm:px-6 pb-20">
               {/* Results Workspace */}
               {viewMode === "results" ? (

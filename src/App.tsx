@@ -38,15 +38,16 @@ function AppContent() {
 
   return (
     <div className="flex h-screen w-full bg-[#FCFBF9] font-serif text-[#333130] overflow-hidden antialiased">
-      <main className={`flex-1 h-full relative transition-all duration-300 ${isSidebarOpen ? 'mr-[400px]' : ''}`}>
-        {currentView === 'gallery' ? (
+      <main className={`flex-1 h-full relative transition-all duration-300 ${isSidebarOpen ? 'mr-[350px]' : ''}`}>
+        <div className={currentView === 'gallery' ? 'h-full' : 'hidden'}>
           <Gallery onOpenReverse={() => setCurrentView('reverse')} />
-        ) : (
+        </div>
+        <div className={currentView !== 'gallery' ? 'h-full' : 'hidden'}>
           <ReversePrompt onClose={() => setCurrentView('gallery')} />
-        )}
+        </div>
       </main>
 
-      <div className={`fixed top-0 right-0 bottom-0 w-[400px] bg-white border-l border-[#E0E0E0] shadow-xl z-50 transition-transform duration-300 transform ${isSidebarOpen ? 'translate-x-0' : 'translate-x-full'} flex flex-col`}>
+      <div className={`fixed top-0 right-0 bottom-0 w-[350px] bg-white border-l border-[#E0E0E0] shadow-xl z-50 transition-transform duration-300 transform ${isSidebarOpen ? 'translate-x-0' : 'translate-x-full'} flex flex-col`}>
         {(activeGadget !== null && editingGadget === undefined) && (
           <GadgetChat 
             gadget={activeGadget} 
