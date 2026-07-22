@@ -35,6 +35,26 @@ function saveClosePreference(action) {
   fs.writeFileSync(PREF_FILE, JSON.stringify({ action }), 'utf8');
 }
 
+
+
+function createSetupWindow() {
+  if (setupWindow && !setupWindow.isDestroyed()) return;
+  setupWindow = new BrowserWindow({
+    width: 520, height: 400, resizable: false,
+    title: '输谱 Lexicona - 初始化',
+    icon: APP_ICON,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  setupWindow.loadFile(path.join(__dirname, 'setup.html'));
+  setupWindow.on('closed', () => {
+    setupWindow = null;
+    if (app.isPackaged && !mainWindow) app.quit();
+  });
+}
 function createTray() {
   if (tray) return;
   const icon = APP_ICON;
@@ -161,6 +181,9 @@ ipcMain.handle('start-app', async () => {
   const port = getPort();
   if (app.isPackaged) await startServer();
   createMainWindow(port);
+  if (setupWindow && !setupWindow.isDestroyed()) {
+    setupWindow.close();
+  }
   return { port };
 });
 ipcMain.handle('quit-app', () => { isQuitting = true; app.quit(); });
@@ -169,7 +192,20 @@ app.setAppUserModelId('com.lexicona.app');
 
 Menu.setApplicationMenu(null);
 
-app.whenReady().then(async () => {debug('App started, isPackaged=' + app.isPackaged);
+app.whenReady().then(async () => {
+  debug('App started, isPackaged=' + app.isPackaged);
+  if (app.isPackaged) {
+    try {
+      const needsSetup = await checkSetup();
+      if (needsSetup) {
+        debug('Setup needed, showing setup window');
+        createSetupWindow();
+        return;
+      }
+    } catch (e) {
+      debug('Setup check error: ' + e.message);
+    }
+  }
   const port = getPort();
   if (app.isPackaged) await startServer();
   createMainWindow(port);

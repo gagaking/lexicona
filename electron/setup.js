@@ -2,7 +2,10 @@ const { execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
-const APP_DIR = path.resolve(__dirname, '..');
+const APP_DIR = (() => {
+  try { const { app } = require('electron'); if (app.isPackaged) return path.dirname(app.getPath('exe')); } catch (_) {}
+  return path.resolve(__dirname, '..');
+})();
 const GPU_ENV = path.join(APP_DIR, 'gpu_env');
 const MODELS_DIR = path.join(APP_DIR, 'models');
 const PYTHON_VENV = path.join(GPU_ENV, 'Scripts', 'python.exe');

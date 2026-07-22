@@ -1,95 +1,54 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>辞谱 Lexicona - 初始化环境</title>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>辞谱 Lexicona - 环境初始化</title>
 <style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: system-ui, -apple-system, sans-serif; background: #FCFBF9; color: #1E1E1E; height: 100vh; display: flex; flex-direction: column; }
-.header { padding: 24px 32px 0; }
-.header h1 { font-size: 18px; font-weight: 500; }
-.header p { font-size: 13px; color: #7A7A7A; margin-top: 4px; }
-.content { flex: 1; padding: 24px 32px; display: flex; flex-direction: column; justify-content: center; }
-.step { padding: 16px; border: 1px solid #E0E0E0; margin-bottom: 12px; border-radius: 0; }
-.step.active { border-color: #1E1E1E; background: #FAFAFA; }
-.step.done { border-color: #4CAF50; background: #F1F8E9; }
-.step.error { border-color: #f44336; background: #FFEBEE; }
-.step-title { font-size: 13px; font-weight: 500; display: flex; align-items: center; gap: 8px; }
-.step-title .icon { width: 16px; height: 16px; flex-shrink: 0; }
-.step-message { font-size: 12px; color: #7A7A7A; margin-top: 4px; }
-.progress-bar { height: 3px; background: #E0E0E0; margin-top: 8px; }
-.progress-bar .fill { height: 100%; background: #1E1E1E; transition: width 0.3s; }
-.footer { padding: 16px 32px 24px; display: flex; gap: 12px; justify-content: flex-end; }
-button { padding: 8px 20px; font-size: 13px; border: 1px solid #E0E0E0; background: white; cursor: pointer; }
-button.primary { background: #1E1E1E; color: white; border-color: #1E1E1E; }
-button:disabled { opacity: 0.4; cursor: not-allowed; }
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Microsoft YaHei','PingFang SC',sans-serif;background:#FCFBF9;color:#1E1E1E;display:flex;align-items:center;justify-content:center;height:100vh;user-select:none;-webkit-app-region:drag}
+.container{text-align:center;padding:40px 48px;width:460px}
+h1{font-family:serif;font-size:26px;font-weight:400;color:#1E1E1E;margin-bottom:2px;letter-spacing:3px}
+.subtitle{font-size:12px;color:#9A9A9A;margin-bottom:28px}
+.status{font-size:13px;color:#555;min-height:48px;line-height:1.6;margin-bottom:20px;word-break:break-word}
+.status.error{color:#C53030}
+.status.success{color:#276749}
+.progress-bar{width:100%;height:4px;background:#E8E6E1;border-radius:2px;overflow:hidden;margin-bottom:28px}
+.progress-fill{height:100%;width:0%;background:#1E1E1E;border-radius:2px;transition:width .3s ease}
+.btn{display:inline-block;padding:9px 28px;font-size:13px;font-weight:500;border:none;cursor:pointer;background:#1E1E1E;color:#fff;border-radius:0;font-family:inherit;transition:background .15s;-webkit-app-region:no-drag}
+.btn:hover{background:#000}
+.btn.secondary{background:#E8E6E1;color:#1E1E1E;margin-left:8px}
+.btn.secondary:hover{background:#D6D4CF}
+.btn:disabled{opacity:.5;cursor:not-allowed}
 </style>
 </head>
 <body>
-<div class="header"><h1>辞谱 Lexicona</h1><p>首次运行需要初始化 GPU 深度图环境</p></div>
-<div class="content" id="steps"></div>
-<div class="footer">
-  <button onclick="quit()">退出</button>
-  <button id="startBtn" class="primary" onclick="startSetup()" style="display:none">开始初始化</button>
-  <button id="launchBtn" class="primary" onclick="launch()" style="display:none">启动应用</button>
+<div class="container">
+<h1>辞谱 Lexicona</h1>
+<p class="subtitle">首次使用需初始化深度学习环境</p>
+<div id="status" class="status">正在检查环境...</div>
+<div class="progress-bar"><div id="progress" class="progress-fill"></div></div>
+<div id="actions" style="display:none">
+<button id="startBtn" class="btn">启动应用</button>
+<button id="retryBtn" class="btn secondary">重试</button>
+<button id="skipBtn" class="btn secondary">跳过</button>
+</div>
 </div>
 <script>
-const steps = ['check', 'venv', 'pip', 'torch', 'deps', 'copy', 'model', 'verify'];
-const labels = {
-  check: '检查 Python 3.10', venv: '创建虚拟环境', pip: '升级 pip',
-  torch: '安装 PyTorch (CUDA)', deps: '安装依赖',
-  copy: '配置深度估计模块', model: '深度图模型',
-  verify: '验证 GPU 环境', done: '初始化完成', error: '出错',
-};
-
-function renderSteps(current, msg) {
-  const el = document.getElementById('steps');
-  let html = '';
-  for (const s of [...steps, 'done']) {
-    const cls = s === current ? 'active' : (steps.indexOf(s) < steps.indexOf(current) ? 'done' : '');
-    const label = labels[s] || s;
-    html += '<div class="step' + (cls ? ' ' + cls : '') + '">';
-    html += '<div class="step-title">' + (s === current ? '⟳' : cls === 'done' ? '✓' : '○') + ' ' + label + '</div>';
-    if (s === current && msg) html += '<div class="step-message">' + msg + '</div>';
-    html += '</div>';
-  }
-  el.innerHTML = html;
-}
-
-renderSteps('check', '正在检查环境...');
-
-window.electronAPI.onSetupProgress((p) => {
-  renderSteps(p.step, p.message);
-  if (p.step === 'done') {
-    document.getElementById('launchBtn').style.display = '';
-  }
-  if (p.step === 'error') {
-    document.getElementById('startBtn').style.display = '';
-  }
+var e=window.electronAPI;
+var s=document.getElementById('status'),p=document.getElementById('progress'),a=document.getElementById('actions');
+var sb=document.getElementById('startBtn'),rb=document.getElementById('retryBtn'),kb=document.getElementById('skipBtn');
+e.onSetupProgress(function(d){
+s.textContent=d.message;
+p.style.width=(d.progress*100)+'%';
+if(d.step==='error'){s.className='status error';a.style.display='block';sb.style.display='none';rb.style.display='inline-block';kb.style.display='inline-block'}
+else if(d.step==='done'){s.className='status success';a.style.display='block';sb.style.display='inline-block';rb.style.display='none';kb.style.display='none';sb.focus()}
 });
-
-async function startSetup() {
-  document.getElementById('startBtn').style.display = 'none';
-  await window.electronAPI.runSetup();
-}
-
-async function launch() {
-  await window.electronAPI.startApp();
-}
-
-function quit() { window.electronAPI.quitApp(); }
-
-// Auto-start setup on page load
-setTimeout(async () => {
-  const needs = await window.electronAPI.checkSetup();
-  if (needs) {
-    document.getElementById('startBtn').style.display = '';
-  } else {
-    renderSteps('done', '环境已就绪');
-    document.getElementById('launchBtn').style.display = '';
-  }
-}, 500);
+function run(){e.checkSetup().then(function(n){if(n){s.textContent='正在准备环境...';return e.runSetup()}else{s.textContent='环境已就绪！';p.style.width='100%';a.style.display='block';sb.style.display='inline-block';rb.style.display='none';kb.style.display='none';sb.focus()}}).catch(function(err){s.textContent='初始化失败: '+(err.message||err);s.className='status error';a.style.display='block';sb.style.display='none';rb.style.display='inline-block';kb.style.display='inline-block'})}
+sb.onclick=function(){sb.disabled=true;sb.textContent='启动中...';e.startApp()};
+rb.onclick=function(){rb.style.display='none';s.className='status';s.textContent='正在重试...';p.style.width='0%';run()};
+kb.onclick=function(){e.startApp()};
+run();
 </script>
 </body>
 </html>
