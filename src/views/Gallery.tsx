@@ -267,6 +267,7 @@ export function Gallery({ onOpenReverse }: { onOpenReverse?: () => void }) {
 
       setGeneratedPrompts((prev) => [newAsset, ...prev]);
     } catch (e: any) {
+      console.error("[Gallery] undress error:", e);
       setApiError(e.message || String(e));
     } finally {
       setUndressingAssets((prev) => ({ ...prev, [asset.id]: false }));

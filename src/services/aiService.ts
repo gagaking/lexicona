@@ -457,14 +457,23 @@ export const undressAsset = async (
   else if (outfitChangeType === 'set') targetDesc = '套装/衣服+裤子+鞋子 (outfit set)';
   else return asset;
 
-  const systemPrompt = `You are a prompt editing assistant. The user wants to apply an "Undress" (一键卸装) operation on an existing prompt dataset.
+  const systemPrompt = `You are a prompt editing assistant. The user wants to apply an "Undress" (\u4e00\u952e\u5378\u88c5) operation on an existing prompt dataset.
 Target to strip: ${targetDesc}.
 
-You are provided with a JSON object representing the prompt's structured data. 
-Your task is to rewrite the fields (especially 'outfitStyle', 'subjectPose', and 'actionDetails') to REMOVE ANY descriptions of the Target's appearance, color, style, or material. 
-HOWEVER, YOU MUST STRICTLY RETAIN descriptions of the Target's position, angle, and state/action!
+Your task is to delete ALL clothing-related descriptions of the target (${targetDesc}) from the prompt structure, including color, style, material, pattern, texture, decoration, and fabric.
 
-If the target is a set (clothes+pants+shoes), remove all clothing and shoe appearance details.
+You MUST check ALL category fields in the structuredData below - especially:
+- "\u642d\u914d\u4e0e\u98ce\u683c" (outfitAndStyle)
+- "\u4e3b\u4f53\u4e0e\u59ff\u6001" (subjectAndPose)
+- "\u52a8\u4f5c\u4e0e\u7ec6\u8282" (actionAndDetails)
+- "\u4e3b\u8272\u4e0e\u6c1b\u56f4" (primaryColorsAndAtmosphere)
+- "\u80cc\u666f\u4e0e\u7a7a\u95f4" (backgroundAndSpace)
+- "\u9053\u5177\u4e0e\u4e92\u52a8" (propsAndInteraction)
+- as well as any other fields - if they contain descriptions of the target clothing, remove them too.
+
+After deletion, ensure the sentence remains grammatically correct and natural to read. Strictly retain descriptions of the target's position, pose, action state, etc. Do NOT modify non-clothing-related content.
+
+If the target is "set", this means the ENTIRE outfit: top, bottom, pants, shoes, accessories, jewelry, bags, hats/headwear, belts, gloves, and any other wearable items. You must strip ALL clothing, footwear, and accessory descriptions from ALL fields.
 
 Original Data:
 ${JSON.stringify({
@@ -474,44 +483,70 @@ ${JSON.stringify({
   actionDetails: asset.actionDetails
 }, null, 2)}
 
-Output exactly a JSON object containing the updated fields. You only need to output the fields that changed. E.g.:
+Output exactly a JSON object with the updated structuredData. Only include fields that changed.
+E.g.:
 {
-  "outfitStyle": "updated chinese...",
-  "subjectPose": "updated chinese...",
-  "actionDetails": "updated chinese..."
+  "structuredData": {
+    "outfitAndStyle": "updated chinese...",
+    "subjectAndPose": "updated chinese...",
+    "primaryColorsAndAtmosphere": "updated chinese if contains clothing refs..."
+  }
 }
-Do not use markdown wrappers.`;
+Do not use markdown wrappers..`;
 
   const responseJson = await callAI(systemPrompt, config);
   
   const finalResp = responseJson?.data ? (Array.isArray(responseJson.data) ? responseJson.data[0] : responseJson.data) : (Array.isArray(responseJson) ? responseJson[0] : responseJson);
   
-  if (!finalResp || (finalResp.outfitStyle === undefined && finalResp.structuredData === undefined && finalResp.subjectPose === undefined && finalResp.actionDetails === undefined)) {
+  if (!finalResp || (finalResp.outfitStyle === undefined && finalResp.outfitAndStyle === undefined && finalResp.structuredData === undefined && finalResp.subjectPose === undefined && finalResp.subjectAndPose === undefined && finalResp.actionDetails === undefined && finalResp.actionAndDetails === undefined)) {
      throw new Error("模型未返回预期的格式: " + JSON.stringify(responseJson).substring(0, 150));
   }
 
   const newAsset = { ...asset };
-  
+  try {
+
   if (finalResp.outfitStyle !== undefined) newAsset.outfitStyle = finalResp.outfitStyle;
+  if (finalResp.outfitAndStyle !== undefined) newAsset.outfitAndStyle = finalResp.outfitAndStyle;
   if (finalResp.subjectPose !== undefined) newAsset.subjectPose = finalResp.subjectPose;
+  if (finalResp.subjectAndPose !== undefined) newAsset.subjectAndPose = finalResp.subjectAndPose;
   if (finalResp.actionDetails !== undefined) newAsset.actionDetails = finalResp.actionDetails;
+  if (finalResp.actionAndDetails !== undefined) newAsset.actionAndDetails = finalResp.actionAndDetails;
   
+  
+  } catch (ef) {
+    console.error("[undressAsset] assign error:", ef, {
+      newAssetType: typeof newAsset,
+      newAssetKeys: Object.keys(newAsset || {}),
+      finalRespKeys: Object.keys(finalResp || {}),
+      assetType: typeof asset
+    });
+    throw ef;
+  }
+
   if (finalResp.structuredData) {
-      if (finalResp.structuredData.outfitStyle !== undefined) newAsset.outfitStyle = finalResp.structuredData.outfitStyle;
-      if (finalResp.structuredData.subjectPose !== undefined) newAsset.subjectPose = finalResp.structuredData.subjectPose;
-      if (finalResp.structuredData.actionDetails !== undefined) newAsset.actionDetails = finalResp.structuredData.actionDetails;
+      if (!newAsset.structuredData) newAsset.structuredData = {};
+      Object.keys(finalResp.structuredData || {}).forEach(function(k) {
+        if (finalResp.structuredData[k] !== undefined) {
+          newAsset.structuredData[k] = finalResp.structuredData[k];
+        }
+      });
+      if (finalResp.structuredData?.outfitStyle !== undefined) newAsset.outfitStyle = finalResp.structuredData.outfitStyle;
+      if (finalResp.structuredData?.outfitAndStyle !== undefined) newAsset.outfitAndStyle = finalResp.structuredData.outfitAndStyle;
+      if (finalResp.structuredData?.subjectPose !== undefined) newAsset.subjectPose = finalResp.structuredData.subjectPose;
+      if (finalResp.structuredData?.subjectAndPose !== undefined) newAsset.subjectAndPose = finalResp.structuredData.subjectAndPose;
+      if (finalResp.structuredData?.actionDetails !== undefined) newAsset.actionDetails = finalResp.structuredData.actionDetails;
+      if (finalResp.structuredData?.actionAndDetails !== undefined) newAsset.actionAndDetails = finalResp.structuredData.actionAndDetails;
   }
   
-  // Also append the note:
-  let noteLabel = '服饰';   
-  if (outfitChangeType === 'shoes') noteLabel = '鞋子';
-  else if (outfitChangeType === 'top') noteLabel = '衣服';
-  else if (outfitChangeType === 'bottom') noteLabel = '裤子';
-  else if (outfitChangeType === 'set') noteLabel = '套装饰品';
   
-  newAsset.outfitStyle = (newAsset.outfitStyle || '') + ` (注: 图中的模特穿着图中的${noteLabel})`;
-  
-  // Update generated title/prompt strings if needed, though they are usually reconstructed on the fly.
+  // Sync field name variants (short names <-> long names)
+  if (newAsset.outfitAndStyle !== undefined) newAsset.outfitStyle = newAsset.outfitAndStyle;
+  else if (newAsset.outfitStyle !== undefined) newAsset.outfitAndStyle = newAsset.outfitStyle;
+  if (newAsset.subjectAndPose !== undefined) newAsset.subjectPose = newAsset.subjectAndPose;
+  else if (newAsset.subjectPose !== undefined) newAsset.subjectAndPose = newAsset.subjectPose;
+  if (newAsset.actionAndDetails !== undefined) newAsset.actionDetails = newAsset.actionAndDetails;
+  else if (newAsset.actionDetails !== undefined) newAsset.actionAndDetails = newAsset.actionDetails;
+
   return newAsset;
 };
 
@@ -527,14 +562,23 @@ export const undressMixedPrompt = async (
   else if (outfitChangeType === 'set') targetDesc = '套装/衣服+裤子+鞋子 (outfit set)';
   else return mixedPrompt;
 
-  const systemPrompt = `You are a prompt editing assistant. The user wants to apply an "Undress" (一键卸装) operation on an existing prompt dataset.
+  const systemPrompt = `You are a prompt editing assistant. The user wants to apply an "Undress" (\u4e00\u952e\u5378\u88c5) operation on an existing prompt dataset.
 Target to strip: ${targetDesc}.
 
-You are provided with a JSON object representing the prompt's structured data. 
-Your task is to rewrite the fields (especially 'outfitStyle', 'subjectPose', and 'actionDetails') to REMOVE ANY descriptions of the Target's appearance, color, style, or material. 
-HOWEVER, YOU MUST STRICTLY RETAIN descriptions of the Target's position, angle, and state/action!
+Your task is to delete ALL clothing-related descriptions of the target (${targetDesc}) from the prompt structure, including color, style, material, pattern, texture, decoration, and fabric.
 
-If the target is a set (clothes+pants+shoes), remove all clothing and shoe appearance details.
+You MUST check ALL field categories in the structuredData below:
+- outfitStyle (\u642d\u914d\u4e0e\u98ce\u683c)
+- subjectAndPose (\u4e3b\u4f53\u4e0e\u59ff\u6001)
+- actionAndDetails (\u52a8\u4f5c\u4e0e\u7ec6\u8282)
+- primaryColorsAndAtmosphere (\u4e3b\u8272\u4e0e\u6c1b\u56f4)
+- backgroundAndSpace (\u80cc\u666f\u4e0e\u7a7a\u95f4)
+- propsAndInteraction (\u9053\u5177\u4e0e\u4e92\u52a8)
+- as well as any other fields.
+
+After deletion, ensure the sentence remains grammatically correct and natural to read. Strictly retain descriptions of the target's position, pose, action state, etc. Do NOT modify non-clothing-related content.
+
+If the target is "set", this means the ENTIRE outfit: top, bottom, pants, shoes, accessories, jewelry, bags, hats/headwear, belts, gloves, and any other wearable items. You must strip ALL clothing, footwear, and accessory descriptions from ALL fields.
 
 Original Data:
 ${JSON.stringify({
@@ -542,15 +586,15 @@ ${JSON.stringify({
   structuredDataZh: mixedPrompt.structuredDataZh || {}
 }, null, 2)}
 
-Output exactly a JSON object containing the updated fields. You only need to output the fields that changed. E.g.:
+Output exactly a JSON object with the updated fields. Only include fields that changed. E.g.:
 {
   "structuredDataZh": {
     "outfitStyle": "updated chinese...",
-    "subjectPose": "updated chinese..."
+    "subjectAndPose": "updated chinese..."
   },
   "structuredData": {
     "outfitStyle": "updated english...",
-    "subjectPose": "updated english..."
+    "subjectAndPose": "updated english..."
   }
 }
 Do not use markdown wrappers.`;
@@ -569,19 +613,6 @@ Do not use markdown wrappers.`;
   }
   if (finalResp.structuredData) {
       newPrompt.structuredData = { ...newPrompt.structuredData, ...finalResp.structuredData };
-  }
-  
-  let noteLabel = '服饰';   
-  if (outfitChangeType === 'shoes') noteLabel = '鞋子';
-  else if (outfitChangeType === 'top') noteLabel = '衣服';
-  else if (outfitChangeType === 'bottom') noteLabel = '裤子';
-  else if (outfitChangeType === 'set') noteLabel = '套装饰品';
-  
-  if (newPrompt.structuredDataZh) {
-      newPrompt.structuredDataZh.outfitStyle = (newPrompt.structuredDataZh.outfitStyle || '') + ` (注: 图中的模特穿着图中的${noteLabel})`;
-  }
-  if (newPrompt.structuredData) {
-      newPrompt.structuredData.outfitStyle = (newPrompt.structuredData.outfitStyle || '') + ` (Note: The model in the image is wearing the ${noteLabel} shown in the image)`;
   }
   
   // Re-build prompt and promptZh
@@ -955,10 +986,8 @@ title (为这个画面起个标题), styleEffect, lightingAngle, subjectPose, co
         else if (outfitChangeType === 'set') targetDesc = '套装(衣服+裤子+鞋子)';
 
         systemPrompt += `\n【！！！特别指令：一键卸装！！！】：用户开启了“一键卸装”模式（卸除目标：${targetDesc}）。
-如果没有锁定服饰(outfitStyle)字段，你需要在此次生成的提示词中，删除关于【${targetDesc}】的相关外观、颜色、款式、材质的描述，但【必须严格保留】物品的位置、角度、姿态等维度的描述。
-这样做的目的是为了避免后续的垫图生图产生外观冲突，保证产品一致性。
-如果是卸套装，则鞋、衣、裤统统删除外观描述但保留位置角度和状态。
-并将 outfitStyle 的对应部分内容以“图中的模特穿着图中的${targetDesc}”补充。注意：如果有明确锁定的字段请以锁定要求为最高优先级！\n`;
+你需要在此次生成的提示词中，删除关于【${targetDesc}】的相关外观、颜色、款式、材质的描述，但【必须严格保留】物品的位置、角度、姿态等维度的描述。
+如果是卸套装，则鞋、衣、裤统统删除外观描述但保留位置角度和状态。\n\n`;
     }
 
     if (modificationRequest.trim()) {
@@ -987,7 +1016,7 @@ title (为这个画面起个标题), styleEffect, lightingAngle, subjectPose, co
             else if (outfitChangeType === 'top') label = '衣服';
             else if (outfitChangeType === 'bottom') label = '裤子';
             else if (outfitChangeType === 'set') label = '套装饰品';
-            finalItem.outfitStyle += ` (注: 图中的模特穿着图中的${label})`;
+            
         }
 
         lockedKeys.forEach(k => {
@@ -1044,10 +1073,8 @@ ${JSON.stringify(wikiBlueprint, null, 2)}
         else if (outfitChangeType === 'set') targetDesc = '套装(衣服+裤子+鞋子)';
 
         systemPrompt += `\n【！！！特别指令：一键卸装！！！】：用户开启了“一键卸装”模式（卸除目标：${targetDesc}）。
-如果没有锁定服饰(outfitStyle)字段，你需要在此次生成的提示词中，删除关于【${targetDesc}】的相关外观、颜色、款式、材质的描述，但【必须严格保留】物品的位置、角度、姿态等维度的描述。
-这样做的目的是为了避免后续的垫图生图产生外观冲突，保证产品一致性。
-如果是卸套装，则鞋、衣、裤统统删除外观描述但保留位置角度和状态。
-并将 outfitStyle 的对应部分内容以“图中的模特穿着图中的${targetDesc}”补充。注意：如果有明确锁定的字段请以锁定要求为最高优先级！\n`;
+你需要在此次生成的提示词中，删除关于【${targetDesc}】的相关外观、颜色、款式、材质的描述，但【必须严格保留】物品的位置、角度、姿态等维度的描述。
+如果是卸套装，则鞋、衣、裤统统删除外观描述但保留位置角度和状态。\n\n`;
     }
 
     if (basePrompt.trim()) {
@@ -1074,7 +1101,7 @@ ${JSON.stringify(wikiBlueprint, null, 2)}
             else if (outfitChangeType === 'bottom') label = '裤子';
             else if (outfitChangeType === 'set') label = '套装饰品';
 
-            finalItem.outfitStyle += ` (注: 图中的模特穿着图中的${label})`;
+            
         }
 
         lockedKeys.forEach(k => {

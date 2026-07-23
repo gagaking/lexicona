@@ -1,6 +1,6 @@
 ﻿import React, { useState, useCallback, useRef, useEffect } from "react";
 import {
-  ArrowLeft,
+  ArrowLeft, Shirt, Loader2,
   Image as ImageIcon,
   Upload,
   Trash2,
@@ -24,6 +24,7 @@ import {
   unloadOllamaModel,
   isIgnorableValue,
 } from "../services/reversePromptService";
+import { undressAsset } from "../services/aiService";
 
 // Fallback to simple unquoted csv if needed, or proper quoting
 const escapeCsv = (val: any) => {
@@ -94,6 +95,7 @@ const DEPTH_REF_PREFIX = "以深度图作为主要空间结构参考，保持原
 
   const [promptCopyVersion, setPromptCopyVersion] = useState<Record<string, "normal" | "depth">>({});
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
+const [undressingPairs, setUndressingPairs] = useState<Record<string, boolean>>({});
 
 
   const toggleActiveView = (id: string, view: 'original' | 'depth') => {
@@ -556,6 +558,30 @@ isEdited,
     setIsProcessing((prev) => { const x = {...prev}; delete x[id]; return x; });
     setIsProcessingDepth((prev) => { const x = {...prev}; delete x[id]; return x; });
     setPairs((prev) => prev.filter((p) => p.id !== id));
+  };
+
+  const handleUndress = async (pair: ImagePromptPair, type: string) => {
+    if (!aiConfig) return;
+    setUndressingPairs((prev) => ({ ...prev, [pair.id]: true }));
+    try {
+      const asset = { structuredData: { ...pair.structuredPrompt }, outfitStyle: pair.structuredPrompt?.outfitAndStyle || '', subjectPose: pair.structuredPrompt?.subjectAndPose || '', actionDetails: pair.structuredPrompt?.actionAndDetails || '' };
+      const updated = await undressAsset(asset, type, aiConfig);
+      const mergedStructured = { ...pair.structuredPrompt, ...(updated.structuredData || {}) };
+      mergedStructured.outfitAndStyle = updated.outfitAndStyle || updated.outfitStyle || mergedStructured.outfitAndStyle;
+      mergedStructured.subjectAndPose = updated.subjectAndPose || updated.subjectPose || mergedStructured.subjectAndPose;
+      mergedStructured.actionAndDetails = updated.actionAndDetails || updated.actionDetails || mergedStructured.actionAndDetails;
+      setPairs((prev) => prev.map((p) =>
+        p.id === pair.id
+          ? {
+              ...p,
+              structuredPrompt: mergedStructured,
+              prompt: getCombinedPrompt({ ...p, structuredPrompt: mergedStructured }),
+              isEdited: true,
+            }
+          : p
+      ));
+    } catch (e: any) { console.error(e); }
+    finally { setUndressingPairs((prev) => ({ ...prev, [pair.id]: false })); }
   };
 
   const getCombinedPrompt = (p: ImagePromptPair) => {
@@ -1054,12 +1080,35 @@ isEdited,
                         </span>
                       )}
                     </div>
-                    <button
-                      onClick={() => removePair(p.id)}
-                      className="text-[#A3A3A3] hover:text-red-500 transition-colors p-1 -mr-1"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
+                    <div className="flex items-center gap-1">
+                      <div className="relative flex items-stretch group/undress">
+                        <button
+                          disabled={undressingPairs[p.id]}
+                          className="text-[#7A7A7A] hover:text-[#1E1E1E] transition-colors p-1 border border-transparent hover:border-[#E0E0E0] disabled:opacity-50"
+                          title="一键卸装"
+                        >
+                          {undressingPairs[p.id] ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Shirt className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                        <div className="absolute top-full right-0 pt-[2px] w-[75px] z-50 opacity-0 invisible group-hover/undress:opacity-100 group-hover/undress:visible transition-all duration-150">
+                          <div className="bg-white border border-[#E0E0E0] shadow-xl flex flex-col py-1">
+                            <button onClick={() => handleUndress(p, "top")} className="px-2 py-1.5 text-[11px] text-center font-sans tracking-wide hover:bg-gray-100 text-[#5A5A5A] hover:text-[#1E1E1E] transition-colors border-b border-white/50">卸衣服</button>
+                            <button onClick={() => handleUndress(p, "bottom")} className="px-2 py-1.5 text-[11px] text-center font-sans tracking-wide hover:bg-gray-100 text-[#5A5A5A] hover:text-[#1E1E1E] transition-colors border-b border-white/50">卸裤子</button>
+                            <button onClick={() => handleUndress(p, "shoes")} className="px-2 py-1.5 text-[11px] text-center font-sans tracking-wide hover:bg-gray-100 text-[#5A5A5A] hover:text-[#1E1E1E] transition-colors border-b border-white/50">卸鞋子</button>
+                            <button onClick={() => handleUndress(p, "set")} className="px-2 py-1.5 text-[11px] text-center font-sans tracking-wide hover:bg-gray-100 text-[#5A5A5A] hover:text-[#1E1E1E] transition-colors">卸套装</button>
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => removePair(p.id)}
+                        className="text-[#A3A3A3] hover:text-red-500 transition-colors p-1"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
 
                   <div className="flex-1 min-h-[120px] bg-[#f9fafb] rounded-none p-3 border border-[#E0E0E0] overflow-y-auto custom-scrollbar relative">
