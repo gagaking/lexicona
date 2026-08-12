@@ -13,6 +13,7 @@ h1{font-family:serif;font-size:26px;font-weight:400;color:#1E1E1E;margin-bottom:
 .status{font-size:13px;color:#555;min-height:48px;line-height:1.6;margin-bottom:20px;word-break:break-word}
 .status.error{color:#C53030}
 .status.success{color:#276749}
+.report{font-size:12px;color:#6B6B6B;text-align:left;background:#F4F3EF;padding:12px;margin-bottom:20px;line-height:1.7;word-break:break-all;min-height:70px}
 .progress-bar{width:100%;height:4px;background:#E8E6E1;border-radius:2px;overflow:hidden;margin-bottom:28px}
 .progress-fill{height:100%;width:0%;background:#1E1E1E;border-radius:2px;transition:width .3s ease}
 .btn{display:inline-block;padding:9px 28px;font-size:13px;font-weight:500;border:none;cursor:pointer;background:#1E1E1E;color:#fff;border-radius:0;font-family:inherit;transition:background .15s;-webkit-app-region:no-drag}
@@ -25,30 +26,97 @@ h1{font-family:serif;font-size:26px;font-weight:400;color:#1E1E1E;margin-bottom:
 <body>
 <div class="container">
 <h1>辞谱 Lexicona</h1>
-<p class="subtitle">首次使用需初始化深度学习环境</p>
+<p class="subtitle">启动前环境检查</p>
 <div id="status" class="status">正在检查环境...</div>
+<div id="report" class="report"></div>
 <div class="progress-bar"><div id="progress" class="progress-fill"></div></div>
 <div id="actions" style="display:none">
-<button id="startBtn" class="btn">启动应用</button>
-<button id="retryBtn" class="btn secondary">重试</button>
-<button id="skipBtn" class="btn secondary">跳过</button>
+<button id="fixBtn" class="btn" style="display:none">自动修复</button>
+<button id="startBtn" class="btn">继续打开</button>
+<button id="retryBtn" class="btn secondary">重新检查</button>
 </div>
 </div>
 <script>
 var e=window.electronAPI;
 var s=document.getElementById('status'),p=document.getElementById('progress'),a=document.getElementById('actions');
-var sb=document.getElementById('startBtn'),rb=document.getElementById('retryBtn'),kb=document.getElementById('skipBtn');
+var sb=document.getElementById('startBtn'),rb=document.getElementById('retryBtn'),fb=document.getElementById('fixBtn');
+var rp=document.getElementById('report');
+var autoTimer=null;
+function clearAutoTimer(){if(autoTimer){clearTimeout(autoTimer);autoTimer=null}}
+
+function showReport(report){
+  clearAutoTimer();
+  var lines=[];
+  if(report.engineFound){lines.push('内置深度引擎：正常'); lines.push('当前电脑路径：'+report.enginePath)}
+  else if(report.pythonFound){lines.push('内置深度引擎：未找到'); lines.push('将回退 Python：'+report.pythonPath)}
+  else{lines.push('内置深度引擎 / Python：未找到')}
+  lines.push('默认模型：'+(report.modelFound?'正常':'未找到'));
+  lines.push('当前电脑模型路径：'+report.modelPath);
+  if(report.issues && report.issues.length){lines.push('问题：'+report.issues.join('；'))}
+  rp.innerHTML=lines.join('<br>');
+
+  var hasProblem=!report.runtimeReady || !report.modelFound || report.needsSetup;
+  if(!hasProblem){
+    s.textContent='环境检查通过，正在打开应用...';
+    s.className='status success';
+    p.style.width='100%';
+    fb.style.display='none';
+    sb.style.display='inline-block';
+    rb.style.display='none';
+    autoTimer=setTimeout(function(){e.startApp()},1200);
+  }else{
+    s.textContent=report.needsSetup?'需要初始化环境，可点击自动修复，或继续打开后手动配置。':(report.runtimeReady?'环境可启动，但模型配置需要检查。':'环境未就绪，请选择自动修复，或继续打开后手动配置。');
+    s.className='status error';
+    p.style.width=report.runtimeReady?'100%':'20%';
+    fb.style.display='inline-block';
+    sb.style.display='inline-block';
+    rb.style.display='inline-block';
+  }
+  a.style.display='block';
+  sb.focus();
+}
+
 e.onSetupProgress(function(d){
-s.textContent=d.message;
-p.style.width=(d.progress*100)+'%';
-if(d.step==='error'){s.className='status error';a.style.display='block';sb.style.display='none';rb.style.display='inline-block';kb.style.display='inline-block'}
-else if(d.step==='done'){s.className='status success';a.style.display='block';sb.style.display='inline-block';rb.style.display='none';kb.style.display='none';sb.focus()}
+  s.textContent=d.message;
+  p.style.width=(d.progress*100)+'%';
+  if(d.step==='error'){s.className='status error';a.style.display='block';fb.style.display='inline-block';sb.style.display='inline-block';rb.style.display='inline-block'}
+  else if(d.step==='done'){s.className='status success';a.style.display='block';fb.style.display='none';sb.style.display='inline-block';rb.style.display='none';sb.focus()}
 });
-function run(){e.checkSetup().then(function(n){if(n){s.textContent='正在准备环境...';return e.runSetup()}else{s.textContent='环境已就绪！';p.style.width='100%';a.style.display='block';sb.style.display='inline-block';rb.style.display='none';kb.style.display='none';sb.focus()}}).catch(function(err){s.textContent='初始化失败: '+(err.message||err);s.className='status error';a.style.display='block';sb.style.display='none';rb.style.display='inline-block';kb.style.display='inline-block'})}
-sb.onclick=function(){sb.disabled=true;sb.textContent='启动中...';e.startApp()};
-rb.onclick=function(){rb.style.display='none';s.className='status';s.textContent='正在重试...';p.style.width='0%';run()};
-kb.onclick=function(){e.startApp()};
-run();
+
+e.onDiagnoseResult(function(report){
+  showReport(report);
+});
+
+function run(){
+  clearAutoTimer();
+  e.diagnoseEnvironment().then(function(report){
+    showReport(report);
+  }).catch(function(err){
+    s.textContent='环境检查失败: '+(err.message||err);
+    s.className='status error';
+    a.style.display='block';
+    fb.style.display='inline-block';
+    sb.style.display='inline-block';
+    rb.style.display='inline-block';
+  });
+}
+
+fb.onclick=function(){
+  fb.disabled=true;fb.textContent='修复中...';
+  e.runSetup().then(function(result){
+    fb.disabled=false;fb.textContent='自动修复';
+    if(!result || !result.success){throw new Error((result&&result.error)||'修复失败')}
+    return e.diagnoseEnvironment();
+  }).then(showReport).catch(function(err){
+    s.textContent='自动修复失败: '+(err.message||err);
+    s.className='status error';
+    fb.disabled=false;fb.textContent='自动修复';
+    fb.style.display='inline-block';
+  });
+};
+
+sb.onclick=function(){clearAutoTimer();sb.disabled=true;sb.textContent='启动中...';e.startApp()};
+rb.onclick=function(){clearAutoTimer();rb.style.display='none';s.className='status';s.textContent='正在重新检查...';p.style.width='0%';run()};
 </script>
 </body>
 </html>

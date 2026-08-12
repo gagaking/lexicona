@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, Tray, Menu, dialog, nativeImage } = require
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
-const { checkSetup, setupPython } = require('./setup');
+const { checkSetup, setupPython, diagnoseEnvironment } = require('./setup');
 
 let mainWindow;
 let setupWindow;
@@ -14,12 +14,19 @@ function debug(m){try{require("fs").appendFileSync(LOG_FILE,new Date().toISOStri
 
 const PREF_FILE = path.join(app.getPath('userData'), 'close-preference.json');
 // Load icon from buffer (asar-safe)
-let APP_ICON = null;
-try {
-  const iconPath = path.join(__dirname, '..', 'build', 'icon.png');
-  APP_ICON = nativeImage.createFromBuffer(fs.readFileSync(iconPath));
-} catch (e) {
-  APP_ICON = nativeImage.createEmpty();
+let APP_ICON = nativeImage.createEmpty();
+const iconCandidates = [
+  path.join(process.resourcesPath, 'icon.ico'),
+  path.join(process.resourcesPath, 'icon.png'),
+  path.join(__dirname, '..', 'build_resources', 'icon.ico'),
+  path.join(__dirname, '..', 'build_resources', 'icon.png'),
+];
+for (const iconPath of iconCandidates) {
+  const candidate = nativeImage.createFromPath(iconPath);
+  if (!candidate.isEmpty()) {
+    APP_ICON = candidate;
+    break;
+  }
 }
 
 function getPort() {
@@ -37,7 +44,7 @@ function saveClosePreference(action) {
 
 
 
-function createSetupWindow() {
+function createSetupWindow(initialReport) {
   if (setupWindow && !setupWindow.isDestroyed()) return;
   setupWindow = new BrowserWindow({
     width: 520, height: 400, resizable: false,
@@ -50,6 +57,11 @@ function createSetupWindow() {
     },
   });
   setupWindow.loadFile(path.join(__dirname, 'setup.html'));
+  setupWindow.webContents.once('did-finish-load', () => {
+    if (initialReport) {
+      setupWindow.webContents.send('diagnose-result', initialReport);
+    }
+  });
   setupWindow.on('closed', () => {
     setupWindow = null;
     if (app.isPackaged && !mainWindow) app.quit();
@@ -71,33 +83,48 @@ function createTray() {
 function startServer() {
   return new Promise((resolve) => {
     const port = getPort();
-   if (!app.isPackaged) {
-     resolve(port);
-     return;
-   }
-   // Load the Express server directly in the main process
-   // Electron's require() handles asar paths natively
-   // Pass dist path via env var so server.cjs can find static files inside asar
-   process.env.LEXICONA_DIST = path.join(__dirname, '..', 'dist');
-   const serverPath = path.join(__dirname, '..', 'dist', 'server.cjs');
-   process.env.PORT = String(port);
-     process.env.NODE_ENV = "production";
-   // Set project root for depth map and other resource paths
-   if (app.isPackaged) {
-     const exeDir = path.dirname(app.getPath('exe'));
-     // Check exe directory first (resources placed alongside exe)
-     if (fs.existsSync(path.join(exeDir, 'gpu_env'))) {
-       process.env.LEXICONA_ROOT = exeDir;
-       console.log('[Server] Using exe directory as project root:', exeDir);
-     } else {
-       // Fallback: project root 2 levels up from win-unpacked
-       const projectRoot = path.resolve(exeDir, '..', '..');
-       if (fs.existsSync(path.join(projectRoot, 'gpu_env'))) {
-         process.env.LEXICONA_ROOT = projectRoot;
-         console.log('[Server] Derived project root from exe path:', projectRoot);
-       }
-     }
-   }
+    const engineCandidates = app.isPackaged
+      ? [
+          path.join(process.resourcesPath, 'depth-engine', 'depth-engine.exe'),
+          path.join(process.resourcesPath, 'run_depth_anything', 'run_depth_anything.exe'),
+        ]
+      : [path.join(__dirname, '..', 'build', 'depth-engine', 'depth-engine.exe')];
+    const depthEngine = engineCandidates.find((p) => fs.existsSync(p));
+    if (depthEngine) {
+      process.env.LEXICONA_DEPTH_ENGINE = depthEngine;
+      console.log('[Server] Using bundled depth engine:', depthEngine);
+    }
+    if (!app.isPackaged) {
+      resolve(port);
+      return;
+    }
+    // Load the Express server directly in the main process
+    // Electron's require() handles asar paths natively
+    // Pass dist path via env var so server.cjs can find static files inside asar
+    process.env.LEXICONA_DIST = path.join(__dirname, '..', 'dist');
+    const serverPath = path.join(__dirname, '..', 'dist', 'server.cjs');
+    process.env.PORT = String(port);
+    process.env.NODE_ENV = "production";
+    // Set project root for depth map and other resource paths
+    if (app.isPackaged) {
+      const exeDir = path.dirname(app.getPath('exe'));
+      const resources = process.resourcesPath;
+      // Full builds place models/depth-engine under resources.
+      if (fs.existsSync(path.join(resources, 'models')) || fs.existsSync(path.join(resources, 'depth-engine'))) {
+        process.env.LEXICONA_ROOT = resources;
+        console.log('[Server] Using resources directory as project root:', resources);
+      } else if (fs.existsSync(path.join(exeDir, 'gpu_env'))) {
+        process.env.LEXICONA_ROOT = exeDir;
+        console.log('[Server] Using exe directory as project root:', exeDir);
+      } else {
+        // Fallback: project root 2 levels up from win-unpacked
+        const projectRoot = path.resolve(exeDir, '..', '..');
+        if (fs.existsSync(path.join(projectRoot, 'gpu_env'))) {
+          process.env.LEXICONA_ROOT = projectRoot;
+          console.log('[Server] Derived project root from exe path:', projectRoot);
+        }
+      }
+    }
 
     try {
       delete require.cache[require.resolve(serverPath)];
@@ -169,6 +196,11 @@ app.on('before-quit', () => { isQuitting = true; });
 
 // IPC
 ipcMain.handle('check-setup', () => checkSetup());
+ipcMain.handle('diagnose-environment', async () => {
+  const report = diagnoseEnvironment();
+  report.needsSetup = await checkSetup();
+  return report;
+});
 ipcMain.handle('run-setup', async () => {
   try {
     await setupPython((p) => {
@@ -196,14 +228,24 @@ app.whenReady().then(async () => {
   debug('App started, isPackaged=' + app.isPackaged);
   if (app.isPackaged) {
     try {
+      const report = diagnoseEnvironment();
       const needsSetup = await checkSetup();
-      if (needsSetup) {
-        debug('Setup needed, showing setup window');
-        createSetupWindow();
-        return;
-      }
+      report.needsSetup = needsSetup;
+      debug('Showing startup environment check');
+      createSetupWindow(report);
+      return;
     } catch (e) {
       debug('Setup check error: ' + e.message);
+      createSetupWindow({
+        runtimeReady: false,
+        canAutoStart: false,
+        engineFound: false,
+        enginePath: '',
+        modelFound: false,
+        modelPath: '',
+        issues: ['启动环境检查失败: ' + e.message],
+      });
+      return;
     }
   }
   const port = getPort();

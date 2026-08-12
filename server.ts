@@ -1,15 +1,20 @@
 import express from "express";
 import path from "path";
 import { existsSync } from "fs";
+import os from "os";
 
 function findProjectRoot(): string {
-  const markers = ["gpu_env", "models", "depth-anything-v2", "run_depth_anything.py"];
+  const markers = ["gpu_env", "models", "depth-engine", "depth-anything-v2", "run_depth_anything.py"];
   const candidates: string[] = [];
   try {
     const exeDir = path.dirname(process.execPath);
     candidates.push(exeDir);
   } catch (_) {}
   candidates.push(process.cwd());
+  try {
+    const rp = (process as any).resourcesPath;
+    if (rp) candidates.push(rp);
+  } catch (_) {}
   try {
     const exeDir = path.dirname(process.execPath);
     candidates.push(path.resolve(exeDir, "..", ".."));
@@ -20,11 +25,48 @@ function findProjectRoot(): string {
   return process.cwd();
 }const ROOT = process.env.LEXICONA_ROOT || findProjectRoot();
 
+function findDepthEngine(): string | null {
+  const candidates: string[] = [];
+  if (process.env.LEXICONA_DEPTH_ENGINE) candidates.push(process.env.LEXICONA_DEPTH_ENGINE);
+  try {
+    const rp = (process as any).resourcesPath;
+    if (rp) {
+      candidates.push(path.join(rp, "depth-engine", "depth-engine.exe"));
+      candidates.push(path.join(rp, "run_depth_anything", "run_depth_anything.exe"));
+    }
+  } catch (_) {}
+  candidates.push(path.join(ROOT, "build", "depth-engine", "depth-engine.exe"));
+  return candidates.find((candidate) => existsSync(candidate)) || null;
+}
+
+function resolveModelPath(modelPath: string | undefined): string | null {
+  const raw = (modelPath || "").trim();
+  const defaultModel = path.join(ROOT, "models", "depth_anything_v2_vitl.pth");
+  if (!raw || raw === "/models/depth_anything_v2_vitl.pth" || raw === "models/depth_anything_v2_vitl.pth") {
+    return existsSync(defaultModel) ? defaultModel : null;
+  }
+
+  const candidates = [raw];
+  if (raw.startsWith("/")) {
+    candidates.push(path.join(ROOT, raw.slice(1)));
+  } else if (!path.isAbsolute(raw)) {
+    candidates.push(path.join(ROOT, raw));
+  }
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  if (existsSync(defaultModel)) {
+    console.warn(`Depth model path not found, falling back to bundled model: ${raw}`);
+    return defaultModel;
+  }
+  return null;
+}
+
 async function startServer() {
   const app = express();
   const PORT = parseInt(process.env.PORT || "3000");
 
-  app.use(express.json({ limit: "50mb" }));
+  app.use(express.json({ limit: "200mb" }));
   
   // CORS middleware
   app.use((req, res, next) => {
@@ -35,6 +77,29 @@ async function startServer() {
       return res.sendStatus(200);
     }
     next();
+  });
+
+  app.get("/api/health", (_req, res) => {
+    const engine = findDepthEngine();
+    const defaultModel = path.join(ROOT, "models", "depth_anything_v2_vitl.pth");
+    const pythonPath = path.join(ROOT, "gpu_env", "Scripts", "python.exe");
+    const issues: string[] = [];
+    if (!engine && !existsSync(pythonPath)) {
+      issues.push("未找到内置深度引擎或 Python 环境");
+    }
+    if (!existsSync(defaultModel)) {
+      issues.push("默认模型不存在: " + defaultModel);
+    }
+    res.json({
+      ok: issues.length === 0,
+      root: ROOT,
+      engineFound: Boolean(engine),
+      enginePath: engine,
+      pythonFound: existsSync(pythonPath),
+      modelFound: existsSync(defaultModel),
+      modelPath: defaultModel,
+      issues,
+    });
   });
 
   // API proxy route for Nvidia
@@ -63,7 +128,7 @@ async function startServer() {
   // API route for local Depth Anything V2 model processing
   app.post("/api/depth-map", async (req, res) => {
     const { writeFileSync, unlinkSync, existsSync, readFileSync } = await import("fs");
-    const { exec } = await import("child_process");
+    const { execFile } = await import("child_process");
     
     try {
       const { image, modelPath } = req.body;
@@ -71,10 +136,14 @@ async function startServer() {
         return res.status(400).json({ error: "Missing image data" });
       }
 
-      const defaultModel = modelPath && modelPath !== "/models/depth_anything_v2_vitl.pth" ? modelPath : path.join(ROOT, "models", "depth_anything_v2_vitl.pth");
-      const activeModelPath = defaultModel;
+      const defaultModelPath = path.join(ROOT, "models", "depth_anything_v2_vitl.pth");
+      const activeModelPath = resolveModelPath(modelPath) || defaultModelPath;
+
       if (!existsSync(activeModelPath)) {
-        return res.status(400).json({ error: "未找到深度估计模型文件: " + activeModelPath });
+        return res.status(400).json({
+          error: "未找到深度估计模型文件: " + activeModelPath,
+          hint: modelPath ? "请检查设置中的深度模型路径是否正确" : "请确认项目目录下有 models/depth_anything_v2_vitl.pth"
+        });
       }
       
       // Clean up base64 prefix
@@ -85,12 +154,13 @@ async function startServer() {
       
       const buffer = Buffer.from(base64Data, "base64");
       const tempId = Date.now() + "_" + Math.floor(Math.random() * 1000);
-      const tempInputPath = path.join(ROOT, `temp_input_${tempId}.jpg`);
-      const tempOutputPath = path.join(ROOT, `temp_output_${tempId}.png`);
+      const tempInputPath = path.join(os.tmpdir(), `depth_input_${tempId}.jpg`);
+      const tempOutputPath = path.join(os.tmpdir(), `depth_output_${tempId}.png`);
       
       writeFileSync(tempInputPath, buffer);
       
-      // Run the Python script
+      // Run the self-contained depth engine when bundled; fall back to the local Python env.
+      const depthEngine = findDepthEngine();
       const pythonPath = path.join(ROOT, "gpu_env", "Scripts", "python.exe");
       let scriptPath = path.join(ROOT, "run_depth_anything.py");
       if (!existsSync(scriptPath)) {
@@ -102,16 +172,24 @@ async function startServer() {
           }
         } catch (_) {}
       }
-      const cmd = `"${pythonPath}" "${scriptPath}" --image "${tempInputPath}" --model "${activeModelPath}" --output "${tempOutputPath}"`;
-      console.log(`Executing depth map command: ${cmd}`);
-      
+      if (!depthEngine && !existsSync(pythonPath)) {
+        throw new Error("未找到深度图推理引擎或 Python 环境，请安装完整版 Lexicona。");
+      }
+      if (!depthEngine && !existsSync(scriptPath)) {
+        throw new Error("未找到 run_depth_anything.py，无法执行深度图推理。");
+      }
+
       await new Promise<void>((resolve, reject) => {
-        exec(cmd, (error, stdout, stderr) => {
+        const args = ["--image", tempInputPath, "--model", activeModelPath, "--output", tempOutputPath];
+        const program = depthEngine || pythonPath;
+        const programArgs = depthEngine ? args : [scriptPath, ...args];
+        console.log(`Executing depth map: ${program} ${programArgs.join(" ")}`);
+        execFile(program, programArgs, { maxBuffer: 50 * 1024 * 1024 }, (error, stdout, stderr) => {
           if (error) {
-            console.error(`Python depth execution error: ${error.message}. Stderr: ${stderr}`);
-            return reject(new Error(error.message || "Python script failed"));
+            console.error(`Depth execution error: ${error.message}. Stderr: ${stderr}`);
+            return reject(new Error((stderr || error.message || "Depth engine failed").trim()));
           }
-          console.log(`Python stdout: ${stdout}`);
+          console.log(`Depth stdout: ${stdout}`);
           resolve();
         });
       });
@@ -206,6 +284,18 @@ async function startServer() {
       }
     });
   }
+
+  app.use((err: any, _req: any, res: any, _next: any) => {
+    const tooLarge = err?.type === "entity.too.large" || err?.status === 413;
+    const badJson = err?.type === "entity.parse.failed" || err?.status === 400;
+    console.error("API request error:", err);
+    const message = tooLarge
+      ? "图片数据过大，请压缩图片后再生成深度图"
+      : badJson
+        ? "请求数据格式错误，请重新尝试"
+        : err?.message || "请求处理失败";
+    res.status(tooLarge ? 413 : 400).json({ error: message });
+  });
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://0.0.0.0:${PORT}`);

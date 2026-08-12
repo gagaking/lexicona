@@ -15,7 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { useAppContext } from "../store";
-import { mirrorPrompt } from "../lib/utils";
+import { getCompressedImageDataUrl, mirrorPrompt } from "../lib/utils";
 import { getModelVendorString, ImagePromptPair } from "../types";
 import { saveAs } from "file-saver";
 import { v4 as uuidv4 } from "uuid";
@@ -95,6 +95,19 @@ const DEPTH_REF_PREFIX = "以深度图作为主要空间结构参考，保持原
 
   const [promptCopyVersion, setPromptCopyVersion] = useState<Record<string, "normal" | "depth">>({});
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
+  // Sync promptCopyVersion: pairs with depthMapUrl should default to depth mode
+  useEffect(() => {
+    setPromptCopyVersion((prev) => {
+      const next = { ...prev };
+      for (const p of pairs) {
+        if (p.depthMapUrl && !next[p.id]) {
+          next[p.id] = "depth";
+        }
+      }
+      return next;
+    });
+  }, [pairs]);
+
 const [undressingPairs, setUndressingPairs] = useState<Record<string, boolean>>({});
 
 
@@ -105,15 +118,7 @@ const [undressingPairs, setUndressingPairs] = useState<Record<string, boolean>>(
   };
 
   const getBase64FromUrl = async (url: string): Promise<string> => {
-    if (url.startsWith("data:image")) return url;
-    const response = await fetch(url);
-    const blob = await response.blob();
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
+    return getCompressedImageDataUrl(url, 1600, 0.9);
   };
 
   const generateCanvasDepthMap = (url: string): Promise<string> => {
@@ -172,13 +177,16 @@ const [undressingPairs, setUndressingPairs] = useState<Record<string, boolean>>(
     });
   };
 
-  const getDepthMap = async (pair: ImagePromptPair) => {
-    setIsProcessingDepth((prev) => ({ ...prev, [pair.id]: true }));
-    try {
-      const imgBase64 = await getBase64FromUrl(pair.imageUrl);
-      const response = await fetch("/api/depth-map", {
-        method: "POST",
-        headers: {
+ const getDepthMap = async (pair: ImagePromptPair) => {
+   setIsProcessingDepth((prev) => ({ ...prev, [pair.id]: true }));
+     setPromptCopyVersion((prev) => ({ ...prev, [pair.id]: "depth" }));
+     try {
+       const imgSrc = pair.imageDataUrl || pair.imageUrl;
+       if (!imgSrc) throw new Error('图片数据不可用，请先上传图片');
+       const imgBase64 = await getBase64FromUrl(imgSrc);
+       const response = await fetch("/api/depth-map", {
+         method: "POST",
+         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
@@ -188,7 +196,16 @@ const [undressingPairs, setUndressingPairs] = useState<Record<string, boolean>>(
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        let detail = "";
+        try {
+          const errorData = await response.json();
+          detail = [errorData?.error, errorData?.hint].filter(Boolean).join(" ");
+        } catch (_) {}
+        throw new Error(
+          detail
+            ? `HTTP error ${response.status}: ${detail}`
+            : `HTTP error! status: ${response.status}`,
+        );
       }
 
       const data = await response.json();
@@ -204,9 +221,12 @@ const [undressingPairs, setUndressingPairs] = useState<Record<string, boolean>>(
         throw new Error(data.error || "未能生成深度图");
       }
     } catch (err: any) {
-      // 后端不可用或 Depth Anything V2 模型未安装，直接报错提示
-      const isServerError = err?.message?.includes("fetch") || err?.message?.includes("NetworkError") || err?.message?.includes("Failed to fetch") || err?.message?.includes("HTTP error");
-      if (isServerError) {
+     // 后端不可用或 Depth Anything V2 模型未安装，直接报错提示
+      const isFetchError = err?.message?.includes("fetch") || err?.message?.includes("NetworkError") || err?.message?.includes("Failed to fetch");
+      const isApiError = err?.message?.includes("HTTP error");
+      if (isApiError) {
+        alert("深度图 API 返回错误: " + (err?.message || err));
+      } else if (isFetchError) {
         alert("深度图功能不可用：服务端后端未运行。\n\n当前运行的是纯前端 Vite 开发服务器，缺少 Express API 后端。\n如需使用深度图功能，请运行 npm run dev（tsx server.ts）启动完整后端。\n\n同时需要安装 Depth Anything V2 模型（.pth 文件）并在设置中配置模型路径。");
       } else {
         alert("获取深度图失败: " + (err?.message || err));
@@ -708,6 +728,7 @@ isEdited,
           formatStruct(P.specialEffects),
         ];
         const combinedPromptStr = fields.filter(Boolean).join(", ");
+        const imageTagsText = Array.isArray(p.imageTags) ? p.imageTags.join(", ") : (p.imageTags || "");
 
         const row = [
           p.id,
@@ -715,7 +736,7 @@ isEdited,
           ...fields,
           combinedPromptStr,
           finalImageUrl,
-          p.imageTags || "",
+          imageTagsText,
           ];
         lines.push(row.map(escapeCsv).join(","));
       }
@@ -798,8 +819,8 @@ isEdited,
                 }
                 className="w-20 text-sm border border-[#E0E0E0] bg-white rounded-none px-1 py-1.5 focus:outline-none focus:border-[#1E1E1E]"
               >
-                <option value="gemini-2.5-flash">gemini-2.5-flash</option>
-                <option value="gemini-3.5-flash">gemini-3.5-flash</option>
+                <option value="gemini-2.5-flash">gemini-2.5</option>
+                <option value="gemini-3.5-flash">gemini-3.5</option>
               </select>
             )}
             {(aiConfig.reversePromptProvider || aiConfig.provider) ===
@@ -912,7 +933,7 @@ isEdited,
               className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${
                 subjectEnabled ? 'bg-[#1E1E1E]' : 'bg-[#D0D0D0]'
               }`}
-              title={subjectEnabled ? "点击关闭语义替换" : "点击开启语义替换"}
+              title={subjectEnabled ? "关闭语义替换" : "开启语义替换"}
             >
               <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${
                 subjectEnabled ? 'translate-x-4' : 'translate-x-0'
@@ -926,7 +947,7 @@ isEdited,
                 type="text"
                 value={subject}
                 onChange={(e) => setSubject(e.target.value)}
-                placeholder="在此输入想要替换的主题或添加的描述，例如：'上海主题同款海报'... 这将基于反推架构重写提示词"
+                placeholder="在此输入想要替换的主题或添加的描述，例如：'删除所有服装的外观、款式、细节描述'... 这将基于反推架构重写提示词"
                 className="w-full bg-white border border-[#E0E0E0] px-4 py-2.5 text-sm text-[#1E1E1E] placeholder-[#A3A3A3] focus:outline-none focus:border-[#1E1E1E] focus:ring-1 focus:ring-[#1E1E1E] transition-all rounded-none"
               />
            </div>
@@ -940,7 +961,7 @@ isEdited,
   }}
               disabled={pairs.length === 0}
               className="mt-6 flex flex-col items-center justify-center p-2.5 rounded-none border border-[#E0E0E0] text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
-              title="清空所有任务"
+              title="清空任务"
             >
               <Trash2 className="w-5 h-5" />
             </button>
@@ -1004,7 +1025,7 @@ isEdited,
                       {p.depthMapUrl ? "更新深度图" : "获取深度图"}
                     </button>
                     <button
-                      onClick={async ()=>{try{await processImage(p)}catch(e){console.error(e)}try{await getDepthMap(p)}catch(e){console.error(e)}}}
+                      onClick={async ()=>{try{await Promise.all([processImage(p), getDepthMap(p)])}catch(e){console.error(e)}}}
                       disabled={isProcessing[p.id] || isProcessingDepth[p.id] || p.isProcessingDepth}
                       className="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-none text-xs font-semibold disabled:opacity-50 shadow-sm transition-colors cursor-pointer w-[120px] text-center font-sans"
                     >
@@ -1113,7 +1134,21 @@ isEdited,
 
                   <div className="flex-1 min-h-[120px] bg-[#f9fafb] rounded-none p-3 border border-[#E0E0E0] overflow-y-auto custom-scrollbar relative">
                     {!p.prompt ? (
-                      <div className="h-full flex items-center justify-center text-[#7A7A7A] text-sm">
+                      <div className="h-full flex flex-col items-center justify-center text-[#7A7A7A] text-sm">
+                        {p.depthMapUrl && (
+                          <div className="mb-3 flex items-center gap-2">
+                            <button
+                              onClick={() => copyImageToClipboard(p.depthMapUrl, p.id + "-depth")}
+                              className="flex items-center gap-1 text-[10px] text-[#1E1E1E] bg-[#FAFAFA] hover:bg-[#1E1E1E] hover:text-white px-2 py-1 border border-[#E0E0E0] rounded-none font-medium whitespace-nowrap cursor-pointer transition-all duration-150"
+                            >
+                              {copiedId === p.id + "-depth" ? (
+                                <><Check className="w-3 h-3 text-green-600" /> 已复制</>
+                              ) : (
+                                <><Copy className="w-3 h-3" /> 复制深度图</>
+                              )}
+                            </button>
+                          </div>
+                        )}
                         等待反推...
                       </div>
                     ) : p.prompt.startsWith("错误") ||
@@ -1238,7 +1273,12 @@ isEdited,
                               {p.styleName}
                             </span>
                             {p.imageTags &&
-                              p.imageTags.split(",").map(
+                              (typeof p.imageTags === 'string'
+                                ? p.imageTags.split(",")
+                                : Array.isArray(p.imageTags)
+                                  ? p.imageTags
+                                  : []
+                              ).map(
                                 (t, i) =>
                                   t.trim() && (
                                     <span

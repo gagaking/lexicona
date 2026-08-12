@@ -1,5 +1,6 @@
 import { AIConfig } from '../types';
 import { GoogleGenAI } from '@google/genai';
+import { jsonrepair } from 'jsonrepair';
 
 export const generateChatResponse = async (
   message: string,
@@ -221,9 +222,7 @@ function parseCleanJSON(text: string) {
   }
 
   // 2. Clean markdown code blocks
-  if (cleanText.startsWith('```json')) cleanText = cleanText.substring(7);
-  else if (cleanText.startsWith('```')) cleanText = cleanText.substring(3);
-  if (cleanText.endsWith('```')) cleanText = cleanText.substring(0, cleanText.length - 3);
+  cleanText = cleanText.replace(/```(?:json)?\s*([\s\S]*?)\s*```/gi, '$1').trim();
   cleanText = cleanText.trim();
 
   // 3. Extract the outermost {} or []
@@ -278,10 +277,24 @@ function parseCleanJSON(text: string) {
           .replace(/\\'/g, "'");
         return JSON.parse(fixedText);
       } catch (finalErr) {
-        throw err;
+        try {
+          return JSON.parse(jsonrepair(finalJsonText));
+        } catch (repairErr) {
+          throw err;
+        }
       }
     }
   }
+}
+
+function messageContentToString(content: any): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part: any) => typeof part === 'string' ? part : (part?.text || part?.content || ''))
+      .join('');
+  }
+  return content || '';
 }
 
 async function fetchWithTimeout(resource: URL | RequestInfo, options: RequestInit & { timeout?: number } = {}) {
@@ -410,7 +423,7 @@ async function callAIVision(systemPrompt: string, base64Image: string, config: A
         throw new Error("Unexpected format from Xiaomi API");
       }
 
-      return parseCleanJSON(data.choices[0].message.content);
+      return parseCleanJSON(messageContentToString(data.choices[0].message.content));
   } else if (config.provider === 'ollama') {
       if (!config.ollamaEndpoint) throw new Error('Ollama endpoint is missing');
       const ollamaUrl = `${config.ollamaEndpoint?.replace(/\/$/, '')}/api/chat`;
@@ -492,7 +505,8 @@ E.g.:
     "primaryColorsAndAtmosphere": "updated chinese if contains clothing refs..."
   }
 }
-Do not use markdown wrappers..`;
+Do not use markdown wrappers..
+IMPORTANT: Do NOT include any meta-commentary in your output such as "according to user request", "user wants to change", "(用户要求修改)" or similar phrases. Output the pure result directly.`;
 
   const responseJson = await callAI(systemPrompt, config);
   
@@ -597,7 +611,8 @@ Output exactly a JSON object with the updated fields. Only include fields that c
     "subjectAndPose": "updated english..."
   }
 }
-Do not use markdown wrappers.`;
+Do not use markdown wrappers.
+IMPORTANT: Do NOT include any meta-commentary in your output such as "according to user request", "user wants to change", "(用户要求修改)" or similar phrases. Output the pure result directly.`;
 
   const responseJson = await callAI(systemPrompt, config);
   
@@ -705,6 +720,8 @@ CRITICAL: You must generate an extremely detailed and rich description for each 
   ]
 }
 You MUST extract the features into exactly these 9 keys in structuredData without any bullet numbers or index prefixes. Do not use markdown wrappers around the JSON.
+
+IMPORTANT: Do NOT include any meta-commentary in your output such as "according to user request", "user wants to change", "(用户要求修改)" or similar phrases. Output the pure result directly.
 `;
 
   let result;
@@ -834,7 +851,7 @@ async function callAI(systemPrompt: string, config: AIConfig) {
         throw new Error(`Unexpected response structure from ${config.provider.toUpperCase()} API`);
       }
       
-      return parseCleanJSON(data.choices[0].message.content);
+      return parseCleanJSON(messageContentToString(data.choices[0].message.content));
 
     } else if (config.provider === 'xiaomi') {
       const apiKey = config.xiaomiApiKey?.trim();
@@ -881,7 +898,7 @@ async function callAI(systemPrompt: string, config: AIConfig) {
         throw new Error(`Unexpected response structure from ${config.provider.toUpperCase()} API`);
       }
       
-      return parseCleanJSON(data.choices[0].message.content);
+      return parseCleanJSON(messageContentToString(data.choices[0].message.content));
 
     } else if (config.provider === 'ollama') {
       if (!config.ollamaEndpoint) throw new Error('Ollama Endpoint is missing');

@@ -112,7 +112,7 @@ export const DEFAULT_AI_CONFIG: AIConfig = {
   reversePromptOllamaModel: 'llava',
   reversePromptConcurrency: 3,
   temperature: 0.7,
-  depthModelPath: 'C:\\Users\\sa\\Documents\\lexicona\\models\\depth_anything_v2_vitl.pth',
+  depthModelPath: '',
 };
 
 export function getModelVendorString(config: AIConfig, isReversePrompt = false): string {

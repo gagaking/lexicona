@@ -18,6 +18,12 @@ asar_content/
 asar_index.html
 fix_*.cjs
 release/
+release-full/
+release-full-next/
+release-full-next6/
+asar_content.asar
+*.bak
+temp-*.cjs
 
 test_input.png
 test_output.png

@@ -3,7 +3,7 @@ productName: 辞谱 Lexicona
 copyright: Copyright © 2026
 
 directories:
-  output: release
+  output: release-full
   buildResources: build_resources
 
 files:
@@ -39,6 +39,12 @@ extraResources:
     to: run_depth_anything.py
   - from: build_resources/icon.ico
     to: icon.ico
+  - from: build/depth-engine
+    to: depth-engine
+  - from: models
+    to: models
+    filter:
+      - "depth_anything_v2_vitl.pth"
 
 publish: null
 

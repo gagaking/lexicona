@@ -1,4 +1,5 @@
 import { AIConfig } from '../types';
+import { jsonrepair } from 'jsonrepair';
 
 const CATEGORIES = {
   styleAndEffect:{label:"1️⃣ 风格与效果",fields:{style:"风格",lighting:"光影",overallStyle:"整体风格",postProcessingColor:"后期色彩"}},
@@ -13,167 +14,613 @@ const CATEGORIES = {
 };
 
 const SYSTEM_PROMPT = `
-作为一名专业的图像分析师，你的任务是客观、精确、极其详细地分析所提供的图像。你必须严格描述画面中实际存在的内容，禁止推断、想象或添加任何画面以外的元素。你的输出必须是一个结构化的JSON对象。
+作为一名专业的AI图像反向提示词分析专家，你的任务是客观、精确地分析所提供的图像，并将图像中的真实视觉信息转换为适用于AI图像生成模型的专业摄影提示词。
+
+你必须严格描述画面中真实存在的视觉信息，不得虚构画面中不存在的人物、物体、动作或环境。
+
+允许依据画面中已经存在的视觉特征，将其转换为专业摄影语言。例如，当画面存在明显的运动拖影、曝光残影、方向性模糊、追焦效果、景深效果等视觉现象时，应转换为对应的摄影表达，而不是仅停留在图像检测描述。这属于视觉语言转换，不属于主观推断。
+
+你的输出必须是一个结构化JSON对象。
 
 核心原则:
 
-1.绝对客观: 只描述你所看到的，不能虚构画面中没有的。
+1. 绝对客观:
+只描述图像中真实存在的信息，不虚构人物、物体、动作、环境。
 
-2.主体优先: 首先识别图像的核心主体。
+2. 主体优先:
+优先识别核心主体，再分析摄影风格、空间、光影和细节。
 
-3.精确量化: 对数量、位置、角度要尽可能精确。
+3. 摄影语言转换:
+你的目标不是输出视觉检测报告，而是输出可以直接用于AI图像生成的专业摄影提示词。
+
+所有视觉信息必须完成：
+
+视觉现象 → 摄影语言 → AI生成提示词
+
+的转换。
+
+避免输出：
+
+- 检测报告式描述
+- 骨骼分析数据
+- 无法影响生成的细节
+
+
+4. 摄影语言优先原则:
+
+当画面中的视觉现象能够明确反映摄影方式时，必须优先输出专业摄影语言，而不是仅描述检测结果。
+
+例如：
+
+视觉现象：
+四肢出现方向性拖影
+
+不要输出:
+"腿部模糊"
+
+应输出:
+"高速运动抓拍，四肢形成自然运动轨迹，产生真实曝光残影"
+
+
+视觉现象：
+背景出现水平线性模糊
+
+不要输出:
+"背景模糊"
+
+应输出:
+"追焦摄影形成背景方向性拖影"
+
+
+视觉现象：
+主体局部清晰，局部产生残影
+
+不要输出:
+"主体部分模糊"
+
+应输出:
+"慢快门运动摄影形成真实动态残影"
+
+
+无需判断摄影师真实使用的设备参数，只需根据画面中存在的视觉特征转换为专业摄影表达。
+
+
+5. 动态摄影强制转换规则:
+
+当画面出现以下任意视觉特征时，必须主动分析动态摄影语言：
+
+- 人物高速移动
+- 奔跑、跳跃、转身等连续动作
+- 四肢方向性拖影
+- 头发、衣物产生惯性变化
+- 背景出现运动方向模糊
+- 尘土、水花、碎屑形成运动轨迹
+- 主体局部清晰、局部残影
+- 多个运动主体产生速度关系
+
+
+此类画面不得只描述：
+
+"正在奔跑"
+"动作自然"
+"充满动感"
+
+
+必须进一步分析：
+
+- 动态来源
+- 运动方向
+- 摄影方式
+- 模糊区域
+- 清晰区域
+- 运动产生的视觉结果
+
+
+优先使用：
+
+- 高速运动抓拍
+- 运动纪实摄影
+- 追焦摄影
+- 跟拍视角
+- 慢快门运动摄影
+- 曝光残影
+- 运动轨迹
 
 JSON Schema & 详细说明:
 
 根对象必须包含以下12个键: "styleAndEffect", "lightingAndCamera", "subjectAndPose", "primaryColorsAndAtmosphere", "backgroundAndSpace", "propsAndInteraction", "actionAndDetails", "outfitAndStyle", "specialEffects", "styleName", "imageTags".
+键名必须严格使用驼峰命名，禁止下划线、短横线、编号前缀或中文键名。
 
 结构定义 (9大类字段):
 
-1.风格与效果:
-风格, 光影, 整体风格, 后期色彩；
+1. 风格与效果 styleAndEffect:
 
-2.光影与机位:
-主光, 光比, 阴影, 景别, 机位角度, 焦段, 环境光/反射, 局部光效, 主体与背景简述
-必须明确区分画面左右与主体左右（以画面视角为准）。所有空间方位、光照来源、投影去向均必须且只能以“观众看这张图时的左（画面左）”和“观众看这张图时的右（画面右）”来定义，禁止使用人物自身的身体左右视点。构图必须保持非对称结构。
-；
-3.主体与姿态:
-人物, 面部表情, 眼神, 微动作, 主体位置（若为单人需明确：画面左侧 / 画面右侧 / 偏左三分之一 / 偏右三分之一；若为双人或多人，绝对不要用死板的左右1/3分立列将多个角色生硬割裂，必须重点描述他们的【重叠与遮挡（overlap/occlusion）】关系（比如谁的肩膀、手臂或躯干部分重合挡住了谁、谁在前半遮挡谁在后）、【物理互动与身体接触】关系（如搭肩、搂腰、并排紧贴、执手、眼神近距离交汇对视），从而建立角色间的有机互动，拒绝毫无生气的各占一边的排队分布姿态）、头部位置, 躯干姿态, 左臂姿态, 右臂姿态, 左腿姿态, 右腿姿态, 脚尖位置
-；
+描述:
 
-4.主色与氛围:
-主色, 副色, 点缀色, 整体氛围, 局部渐变, 环境反射；
-
-5.背景与空间:
-几何构成, 比例, 材质, 光影互动, 空间感。
-画面构图必须保持非对称空间分布。若是单人项目，主体位置需明确落在画面左侧或右侧的三分之一区域之一；若是双人或多人项目，绝不能割裂成左右1/3对称或孤立独立的死板构图，必须详细描述他们因【身体重合、微倾交错或前后纵深叠放】所构成的统一、自然的复合重心，使其在非对称构图中建立丰富的空间深层层次、纵深感与亲密的交互感。
-
-6.道具与互动:
-道具类型, 互动方式（包括人与道具的交互，以及【多角色之间密切的物理接触与情感互动】，如：两人的动作互动、眼神呼应、肢体交叉错落、接触接触角度，必须明确如何通过肢体纠缠、交互或重叠遮挡来表达人物关系张力，严禁让角色之间出现零互动的隔离状态）, 手指/关节角度, 织物褶皱, 道具占比；
-
-7.动作与细节:
-主体动作, 手、脚位置, 配饰, 眼神, 微动作。
-
-8.穿搭与风格:
-上装, 下装, 鞋子, 反光与褶皱, 色彩和谐, 穿搭一致性。
+- 整体摄影风格
+- 艺术风格
+- 视觉质感
+- 抓拍感或摆拍感
+- 摄影氛围
 
 
-9.特殊效果:
-视觉特效, 后期处理, 材质精度；
+动态摄影时：
 
-关键字段说明:
+不要输出：
+"画面有运动模糊"
 
-1."imageTags" (强制标准化):
-用于生成统一的图像分类标签，必须严格遵循以下选项，各标签之间用逗号分隔：
+改为：
 
-第一部分 (必须选1个): 必须且仅能从以下4个类别中提取最合适的一个："模特类"、"静物类"、"局部类"、"棚拍类"。
+"运动纪实摄影，真实高速运动抓拍，具有摄影瞬间感"
 
-第二部分 (必须选3-5个): 根据图像特征，从以下选项中选择3到5个对应的特征词："纯色背景"、"真实场景"、"影棚布景"、"CG/合成感"、"明亮高调"、"暗调氛围"、"强对比光"、"柔和漫射光"、"饱和"、"低饱和"、"暖色氛围"、"冷色氛围"。
 
-示例输出："模特类, 真实场景, 明亮高调, 暖色氛围, 柔和漫射光"
+不要输出：
 
-2."styleName":
-一个非常简短的，2-5个词的图像风格总结。
+"照片很有动感"
 
-示例: "复古学院风时尚人像", "户外运动风人像摄影", "空灵棱镜光人像"
+改为：
 
-其他类别 (structuredPrompt):
+"高速运动过程中的瞬间捕捉，呈现真实运动摄影效果"
 
-请填充 "styleAndEffect", "lightingAndCamera" 等对象中的所有字段。
 
-字段分析阶段保持详细，但最终输出必须遵循“生成提示词友好化”原则：
+2. 光影与机位 lightingAndCamera:
 
-1. 信息合并规则:
-- 同一视觉信息只能保留一次，禁止重复描述。
-- 相同含义的内容必须合并，例如：
-  "自然光、户外漫射光、柔和自然光" 合并为一个更准确的描述。
-- 同一个主体、道具、颜色、材质不得在多个字段重复堆叠。
+描述:
 
-2. 摄影语言转换规则:
-- 输出内容必须适用于AI图像生成模型理解，而不是视觉检测报告。
-- 将检测型描述转换为摄影语言。
-- 删除无法直接影响生成效果的分析描述。
+- 主光方向
+- 光线性质
+- 光比
+- 阴影
+- 景别
+- 镜头角度
+- 焦段感觉
+- 环境光
+- 摄影方式
 
-3. 人物姿态简化规则:
-- 保留整体动作、姿态关系、动态方向。
-- 禁止输出过度骨骼化描述，例如：
-  "脚尖指向右下方"
-  "膝盖微屈角度"
-  "手指弯曲多少度"
-  "关节具体角度"
-- 将其转换为自然摄影描述，例如：
-  "自然行走姿态"
-  "身体轻微转向"
-  "动作自然放松"
 
-4. 空间位置优化规则:
-- 保留影响构图的信息，例如：
-  "主体偏左构图"
-  "非对称构图"
-  "前后空间层次"
-- 删除过度精确的位置标注，例如：
-  "占画面六分之一"
-  "距离边缘多少比例"
-  "具体像素位置"
-- 除非明显影响视觉效果，否则不要输出比例数字。
+空间方向必须使用：
 
-5. 光影描述优化规则:
-- 保留主要光源方向、光线性质、阴影关系。
-- 删除重复光照描述。
-- 不同时出现多个表达相同含义的光线词。
+画面左
+画面右
 
-6. 道具与材质描述优化规则:
-- 保留具有生成价值的信息：
-  类型、形态、材质、主要互动关系。
-- 删除重复物体名称。
-- 不输出过细的检测数据，例如：
-  "占据画面多少比例"
-  "边缘距离"
-  "精确反射区域"
 
-7. 穿搭描述优化规则:
-- 保留完整服装搭配、颜色关系、材质特点。
-- 删除重复颜色和重复款式描述。
-- 同一件服装只描述一次。
+禁止使用：
 
-8. 输出组织规则:
-最终字段内容应接近专业摄影提示词，而不是逐项分析结果。
+人物自身左右。
 
-9. 内容长度控制:
-- 普通人像图片：每个字段保持简洁描述，总输出控制在合理范围内。
-- 复杂场景：优先保留影响生成效果的信息，不堆叠低价值细节。
 
-10. 字段要求:
-每个字段的描述必须：
-- 语言自然流畅
-- 简洁精炼
-- 不做解释说明
-- 不包含分析过程
-- 不包含无效重复内容
-- 不包含倒装表达
-- 不添加无意义修饰词
+当出现动态视觉特征时：
 
-如果某字段不适用、无明显特征、不存在或在画面中不可见，请严格直接留空。
+必须分析：
 
-🚨 零无效 Placeholder 要求 (极关键):
-对于画面中不存在、未出现或不适用的一切字段，严禁写任何表示不适用、不可见的虚假/占位描述词。
+- 是否具有追焦摄影特征
+- 是否具有跟拍视角
+- 是否具有慢快门视觉效果
+- 是否具有运动曝光轨迹
 
-绝对不要生成以下占位文案，包括但不限于：
-"画面中不可见"、"不可见"、"未出现"、"无"、"N/A"、"不适用"、"未涉及"、"无法判断"、"画面外"
 
-若无内容，对应字符串必须为 ""。
+例如：
 
-输出要求:
+不要输出:
 
-你的全部输出必须是一个单一、有效的 JSON 对象。
+"背景虚化"
 
-所有描述细节应为通顺连贯的短句，不得在末尾加上不必要的标点符号。
 
-不要在 JSON 对象前后包含任何文本、解释或 markdown 格式。
+改为:
 
-字段内容、图片标签到所有的描述细节全部只输出中文。
+"摄影师跟随主体移动拍摄，背景产生与运动方向一致的追焦拖影"
+
+
+3. 主体与姿态 subjectAndPose:
+
+描述:
+
+- 人物类型
+- 年龄特征
+- 表情
+- 眼神
+- 身体姿态
+- 构图位置
+- 人物关系
+
+
+动作必须摄影化。
+
+
+禁止：
+
+"左腿弯曲90度"
+"手指关节角度"
+"脚尖朝右下"
+
+
+改为：
+
+"自然奔跑姿态"
+"身体处于运动转换阶段"
+"动作未完全定格"
+
+
+多人时：
+
+重点描述：
+
+- 前后关系
+- 遮挡关系
+- 身体重叠
+- 互动关系
+
+
+禁止机械描述：
+
+"人物分别位于左右两侧"
+
+
+4. 主色与氛围 primaryColorsAndAtmosphere:
+
+描述:
+
+- 主色
+- 辅助色
+- 点缀色
+- 色彩关系
+- 整体氛围
+- 环境反射
+
+
+删除重复颜色。
+
+
+5. 背景与空间 backgroundAndSpace:
+
+描述:
+
+- 环境类型
+- 空间结构
+- 前中后景关系
+- 材质
+- 光影互动
+
+
+保留：
+
+- 构图趋势
+- 空间深度
+- 环境关系
+
+
+删除：
+
+- 精确比例数字
+- 像素位置
+
+
+如果背景存在运动变化：
+
+描述其摄影效果：
+
+例如：
+
+"背景因追焦摄影产生方向性运动拖影"
+
+
+不要输出：
+
+"背景模糊"
+
+
+6. 道具与互动 propsAndInteraction:
+
+描述:
+
+- 道具类型
+- 材质
+- 人与道具关系
+- 人物互动
+- 织物变化
+
+
+删除：
+
+- 无意义尺寸
+- 占比数据
+
+
+7. 动作与细节 actionAndDetails:
+
+重点字段。
+
+
+必须同时分析：
+
+动作：
+人物正在执行什么动作。
+
+
+动作阶段：
+动作开始、进行中或结束瞬间。
+
+
+动作惯性：
+身体、四肢、衣物、头发是否因运动产生连续变化。
+
+
+视觉结果：
+动作是否形成：
+
+- 运动轨迹
+- 残影
+- 曝光拖影
+- 局部动态模糊
+
+
+不要只输出：
+
+"人物奔跑"
+
+
+应转换为：
+
+"高速奔跑过程中被摄影师捕捉的一瞬间，身体存在惯性变化，四肢形成自然运动轨迹，衣物与头发随运动方向产生动态变化"
+
+
+8. 穿搭与风格 outfitAndStyle:
+
+描述:
+
+- 上装
+- 下装
+- 鞋子
+- 材质
+- 色彩关系
+- 风格定位
+
+
+同一服装只描述一次。
+
+删除重复颜色描述。
+
+
+9. 特殊效果 specialEffects:
+
+描述:
+
+- 后期处理
+- 胶片质感
+- 动态效果
+- 景深
+- 特殊视觉效果
+
+
+动态摄影优先规则：
+
+动态摄影效果优先级高于：
+
+- 胶片感
+- 色彩调整
+- 普通虚化
+
+
+当存在动态视觉特征：
+
+必须分析：
+
+1. 动态来源：
+
+- 人物移动
+- 摄影师移动
+- 镜头追焦
+- 快门曝光
+
+
+2. 模糊区域：
+
+- 背景
+- 四肢
+- 衣物
+- 头发
+- 飞溅物
+
+
+3. 清晰区域：
+
+例如：
+
+"面部保持清晰，身体边缘存在运动残影"
+
+
+输出：
+
+"真实慢快门形成的运动轨迹"
+
+"追焦摄影形成的背景方向性拖影"
+
+"高速运动抓拍形成的局部曝光残影"
+
+"人物核心区域保持清晰，四肢边缘形成自然动态拖影"
+
+
+禁止输出：
+
+"运动模糊"
+
+"背景模糊"
+
+"人物模糊"
+
+
+styleName:
+
+输出2-5个词的风格总结。
+
+
+例如：
+
+"户外运动纪实摄影"
+
+"高级街拍人像"
+
+
+imageTags:
+
+必须严格遵循：
+
+第一部分只能选择：
+
+"模特类"
+"静物类"
+"局部类"
+"棚拍类"
+
+
+第二部分选择3-5个：
+
+"纯色背景"
+"真实场景"
+"影棚布景"
+"CG/合成感"
+"明亮高调"
+"暗调氛围"
+"强对比光"
+"柔和漫射光"
+"饱和"
+"低饱和"
+"暖色氛围"
+"冷色氛围"
+
+
+信息合并规则:
+
+1. 同一视觉信息只能出现一次。
+
+2. 相同含义必须合并。
+
+3. 输出内容必须适用于AI生成。
+
+4. 删除检测型语言。
+
+
+空间规则:
+
+保留：
+
+- 非对称构图
+- 主体位置
+- 空间层次
+
+
+删除：
+
+- 过度精确比例。
+
+
+光影规则:
+
+保留：
+
+- 光源方向
+- 光线性质
+- 阴影关系
+
+
+删除：
+
+- 重复光线描述。
+
+
+人物规则:
+
+保留：
+
+- 整体动作
+- 姿态方向
+- 动态关系
+
+
+删除：
+
+- 骨骼化描述。
+
+
+服装规则:
+
+保留：
+
+- 款式
+- 材质
+- 色彩搭配
+
+
+删除：
+
+- 重复描述。
+
+
+负向提示词分析规则:
+
+不要默认输出：
+
+- 低分辨率
+- 模糊
+- 画质差
+
+
+现代AI模型通常已经具备基础质量控制。
+
+只有当画面真实存在以下问题时才输出：
+
+- 主体失焦
+- 画质损坏
+- 人体错误结构
+
+
+禁止使用：
+
+"模糊"
+
+作为通用负向词。
+
+因为其可能抑制：
+
+- 动态模糊
+- 景深效果
+- 胶片柔焦
+- 运动拖影
+
+
+零Placeholder要求:
+
+如果字段不存在内容：
+
+输出空字符串。
+
+
+禁止输出：
+
+"不可见"
+"不存在"
+"无"
+"N/A"
+"不适用"
+"无法判断"
+"画面外"
+
+
+最终输出要求:
+
+1. 只能输出一个有效JSON对象。
+
+2. 不包含任何解释文字。
+
+3. 所有内容中文。
+
+4. 字段内容必须自然流畅。
+
+5. 输出结果必须接近专业摄影提示词，而不是图片分析报告。
+
+6. 当一种视觉现象既可以描述为检测结果，又可以描述为摄影语言时，必须优先采用摄影语言，因为最终目标是用于AI图像生成，而不是图像识别。
 `;
-
-const NEGATIVE_PROMPT = "低分辨率, 模糊, 背景杂乱, 畸形,collage, grid, split screen, multiple views, multiple angles, triptych, photobooth grid, repeating patterns, a pair of shoes, collection sheet;";
+const NEGATIVE_PROMPT = "低清晰度, 画质损坏, 严重压缩痕迹, 主体失焦, 五官错误, 人体畸形, 肢体异常, 多余肢体, 错误结构, 背景无意义杂乱元素, collage, grid, split screen, multiple views, multiple angles, triptych, photobooth grid, repeating patterns, collection sheet, duplicated objects, duplicated products, multiple shoes;";
 
 async function fetchWithTimeout(resource: URL | RequestInfo, options: RequestInit & { timeout?: number } = {}) {
   const { timeout = 120000 } = options;
@@ -315,29 +762,40 @@ export const isIgnorableValue = (val: any): boolean => {
   return false;
 };
 
+const valueToPromptText = (val: any): string => {
+  if (val === undefined || val === null) return "";
+  if (Array.isArray(val)) {
+    return val.map(valueToPromptText).filter(Boolean).join("，");
+  }
+  if (typeof val === "object") {
+    return Object.values(val).map(valueToPromptText).filter(Boolean).join("，");
+  }
+  const text = String(val).trim();
+  return text && !isIgnorableValue(text) ? text : "";
+};
+
 const buildStringPrompt = (structuredPrompt: any) => {
   if (!structuredPrompt) return "";
   return Object.entries(CATEGORIES).map(([catKey, cat]) => {
     const data = structuredPrompt[catKey];
     if (!data) return "";
-    
+
+    const categoryLabel = cat.label.replace(/^\d+[^\u4e00-\u9fa5]*/, "").trim();
+
     if (typeof data === 'string') {
       const cleanData = data.trim();
-      return (cleanData && !isIgnorableValue(cleanData)) ? 
-        `[${cat.label.replace(/^\d+️⃣\s*/, '')}: ${cleanData}]` : "";
+      return cleanData && !isIgnorableValue(cleanData) ? `[${categoryLabel}: ${cleanData}]` : "";
     }
 
     const items = Object.entries(cat.fields).map(([fieldKey, fieldLabel]) => {
-      let val = data[fieldKey];
-      if (Array.isArray(val)) {
-        val = val.filter(x => x && String(x).trim() && !isIgnorableValue(x)).join('，');
-      }
-      return (val && typeof val === 'string' && val.trim() && !isIgnorableValue(val.trim())) ? 
-        `${fieldLabel}: ${val.trim().replace(/([,，]\s*)+/g, '，').replace(/^[，\s。；;、]+|[，\s。；;、]+$/g, '')}` : "";
+      const text = valueToPromptText(data[fieldKey]);
+      if (!text) return "";
+      const cleanText = text.replace(/([,，]\s*)+/g, '，').replace(/^[，\s。；;、]+|[，\s。；;、]+$/g, '');
+      return `${fieldLabel}: ${cleanText}`;
     }).filter(x => x !== "");
-    
+
     if (items.length === 0) return "";
-    return `[${cat.label.replace(/^\d+️⃣\s*/, '')}: ${items.join('；')}]`;
+    return `[${categoryLabel}: ${items.join('；')}]`;
   }).filter(x => x !== "").join("; ");
 };
 
@@ -358,14 +816,7 @@ function parseCleanJSON(text: string) {
   }
 
   // 2. Clear any markdown code blocks if present
-  if (cleanText.startsWith('```json')) {
-    cleanText = cleanText.substring(7);
-  } else if (cleanText.startsWith('```')) {
-    cleanText = cleanText.substring(3);
-  }
-  if (cleanText.endsWith('```')) {
-    cleanText = cleanText.substring(0, cleanText.length - 3);
-  }
+  cleanText = cleanText.replace(/```(?:json)?\s*([\s\S]*?)\s*```/gi, '$1').trim();
   cleanText = cleanText.trim();
 
   // 3. Find the first '{' and last '}'
@@ -375,6 +826,23 @@ function parseCleanJSON(text: string) {
   if (firstBrace !== -1 && lastBrace !== -1) {
     cleanText = cleanText.substring(firstBrace, lastBrace + 1);
   }
+
+  // Fix: imageTags field with multiple comma-separated string values from model
+  // e.g. "imageTags": "模特类", "真实场景", "暖色氛围"
+  // should be "imageTags": "模特类, 真实场景, 暖色氛围"
+  cleanText = cleanText.replace(
+    /("imageTags":\s*"[^"]*")((?:\s*,\s*"[^"]*")+)/g,
+    (_, prefix, rest) => {
+      const first = prefix.match(/"([^"]*)"/)?.[1] || "";
+      const others: string[] = [];
+      const re = /"([^"]*)"/g;
+      let m;
+      while ((m = re.exec(rest)) !== null) {
+        if (m[1]) others.push(m[1]);
+      }
+      return '"imageTags": "' + [first, ...others].join(", ") + '"';
+    }
+  );
 
   try {
     return JSON.parse(cleanText);
@@ -402,13 +870,103 @@ function parseCleanJSON(text: string) {
           .replace(/\\'/g, "'");
         return JSON.parse(fixedText);
       } catch (finalErr) {
-        throw err;
+        try {
+          return JSON.parse(jsonrepair(cleanText));
+        } catch (repairErr) {
+          throw err;
+        }
       }
     }
   }
 }
 
-function normalizeParsedResponse(parsed: any): any {
+function buildFallbackPrompt(rawParsed: any): string {
+  if (!rawParsed || typeof rawParsed !== 'object') return "";
+
+  const directKeys = [
+    "prompt",
+    "description",
+    "result",
+    "output",
+    "text",
+    "content",
+    "structuredPrompt",
+    "structured_data",
+    "data",
+    "analysis",
+    "analysisResult",
+  ];
+  for (const key of directKeys) {
+    const text = valueToPromptText((rawParsed as any)[key]);
+    if (text) return text.slice(0, 8000);
+  }
+
+  const skipKeys = new Set([
+    "styleName",
+    "imageTags",
+    "negativePrompt",
+    "error",
+    "status",
+    "usage",
+    "id",
+    "created",
+    "model",
+    "object",
+    "choices",
+  ]);
+  const collected: string[] = [];
+  const seen = new Set<string>();
+
+  const walk = (value: any, path: string, depth: number) => {
+    if (!value || depth > 6) return;
+    if (Array.isArray(value)) {
+      const text = valueToPromptText(value);
+      if (text && path && !seen.has(path)) {
+        collected.push(`${path}: ${text}`);
+        seen.add(path);
+      }
+      value.forEach((item, index) => walk(item, `${path}[${index}]`, depth + 1));
+      return;
+    }
+    if (typeof value === 'object') {
+      for (const [key, child] of Object.entries(value)) {
+        if (skipKeys.has(key)) continue;
+        walk(child, path ? `${path}.${key}` : key, depth + 1);
+      }
+      return;
+    }
+    const text = valueToPromptText(value);
+    if (text && path && !seen.has(path)) {
+      collected.push(`${path}: ${text}`);
+      seen.add(path);
+    }
+  };
+
+  walk(rawParsed, "", 0);
+  return collected.slice(0, 40).join("；");
+}
+
+function messageContentToString(content: any): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part: any) => typeof part === 'string' ? part : (part?.text || part?.content || ''))
+      .join('');
+  }
+  return content || '';
+}
+
+function toTagString(value: any): string {
+  if (Array.isArray(value)) {
+    return value.filter(Boolean).map((item) => String(item).trim()).filter(Boolean).join(", ");
+  }
+  if (value && typeof value === 'object') {
+    return JSON.stringify(value);
+  }
+  return String(value ?? "").trim();
+}
+
+export function normalizeParsedResponse(parsed: any): any {
   if (!parsed || typeof parsed !== 'object') return parsed;
 
   const normalized: any = {};
@@ -425,7 +983,10 @@ function normalizeParsedResponse(parsed: any): any {
 
   // 2. Identify categories mapping
   const categoryKeys = Object.keys(CATEGORIES); // e.g. ["styleAndEffect", ...]
-  
+
+  const compactKey = (key: string): string =>
+    String(key || "").toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]/g, "");
+
   // Create mapping of possible Chinese names of categories to the English category key
   const catNamesMapping: Record<string, string> = {
     "风格与效果": "styleAndEffect",
@@ -439,83 +1000,128 @@ function normalizeParsedResponse(parsed: any): any {
     "特殊效果": "specialEffects"
   };
 
-  // Find matches in the original object
-  for (const rawKey of Object.keys(parsed)) {
-    let targetCategoryKey: string | null = null;
-    
-    if (categoryKeys.includes(rawKey)) {
-      targetCategoryKey = rawKey;
-    } else {
-      // 1. Try to find match using English keys (substring or case-insensitive)
-      for (const engCatKey of categoryKeys) {
-        if (rawKey.toLowerCase().includes(engCatKey.toLowerCase()) || 
-            engCatKey.toLowerCase().includes(rawKey.toLowerCase())) {
-          targetCategoryKey = engCatKey;
-          break;
-        }
+  const categoryKeyAliases: Record<string, string[]> = {
+    styleAndEffect: ["styleandeffect", "styleeffect", "style_effect", "styleeffects", "style_effects"],
+    lightingAndCamera: ["lightingandcamera", "lightingcamera", "light_camera", "lightsandcamera", "lighting_camera"],
+    subjectAndPose: ["subjectandpose", "subjectpose", "subject_pose", "subject_and_pose"],
+    primaryColorsAndAtmosphere: ["primarycolorsandatmosphere", "primarycolorsatmosphere", "primary_colors_atmosphere", "primary_colors_and_atmosphere"],
+    backgroundAndSpace: ["backgroundandspace", "backgroundspace", "background_space", "background_and_space"],
+    propsAndInteraction: ["propsandinteraction", "propsinteraction", "props_interaction", "props_and_interaction"],
+    actionAndDetails: ["actionanddetails", "actiondetails", "action_details", "action_and_details"],
+    outfitAndStyle: ["outfitandstyle", "outfitstyle", "outfit_style", "outfit_and_style"],
+    specialEffects: ["specialeffects", "special_effects", "specialeffect"]
+  };
+
+  const findCategoryKey = (rawKey: string): string | null => {
+    if (categoryKeys.includes(rawKey)) return rawKey;
+
+    const compactRaw = compactKey(rawKey);
+    for (const catKey of categoryKeys) {
+      const compactCat = compactKey(catKey);
+      if (compactRaw === compactCat) return catKey;
+      if (compactCat.length >= 8 && compactRaw.includes(compactCat)) {
+        return catKey;
       }
-      
-      // 2. Try to find match using Chinese category names
-      if (!targetCategoryKey) {
-        for (const [cnCatName, engCatKey] of Object.entries(catNamesMapping)) {
-          if (rawKey.includes(cnCatName) || cnCatName.includes(rawKey) ||
-              rawKey.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '').includes(cnCatName)) {
-            targetCategoryKey = engCatKey;
-            break;
-          }
+    }
+
+    for (const [catKey, aliases] of Object.entries(categoryKeyAliases)) {
+      for (const alias of aliases) {
+        const compactAlias = compactKey(alias);
+        if (compactRaw === compactAlias) return catKey;
+        if (compactAlias.length >= 8 && compactRaw.includes(compactAlias)) {
+          return catKey;
         }
       }
     }
-    
+
+    for (const [cnCatName, catKey] of Object.entries(catNamesMapping)) {
+      const compactCn = compactKey(cnCatName);
+      if (compactCn && compactRaw.includes(compactCn)) {
+        return catKey;
+      }
+    }
+
+    return null;
+  };
+
+  const findFieldValue = (rawCategoryData: any, engFieldKey: string, cnFieldName: string): any => {
+    if (rawCategoryData[engFieldKey] !== undefined) return rawCategoryData[engFieldKey];
+
+    const compactEng = compactKey(engFieldKey);
+    const compactCn = compactKey(cnFieldName);
+    const rawEntries = Object.entries(rawCategoryData);
+
+    for (const [rawFieldKey] of rawEntries) {
+      const compactRaw = compactKey(rawFieldKey);
+      if (compactRaw === compactEng || compactRaw === compactCn) {
+        return rawCategoryData[rawFieldKey];
+      }
+    }
+
+    for (const [rawFieldKey] of rawEntries) {
+      const compactRaw = compactKey(rawFieldKey);
+      if (compactCn && compactRaw.includes(compactCn)) {
+        return rawCategoryData[rawFieldKey];
+      }
+    }
+
+    for (const [rawFieldKey] of rawEntries) {
+      const compactRaw = compactKey(rawFieldKey);
+      if (compactEng.length >= 5 && compactRaw.includes(compactEng)) {
+        return rawCategoryData[rawFieldKey];
+      }
+    }
+
+    return undefined;
+  };
+
+  const findTopKey = (rawKey: string): string => {
+    const compactRaw = compactKey(rawKey);
+    if (compactRaw === compactKey("styleName") || compactRaw === compactKey("style_name")) return "styleName";
+    if (compactRaw === compactKey("imageTags") || compactRaw === compactKey("image_tags")) return "imageTags";
+    for (const [cnKey, engKey] of Object.entries(topChineseKeys)) {
+      const compactCn = compactKey(cnKey);
+      if (compactCn && (compactRaw.includes(compactCn) || compactCn.includes(compactRaw))) {
+        return engKey;
+      }
+    }
+    return rawKey;
+  };
+
+  // Find matches in the original object
+  for (const rawKey of Object.keys(parsed)) {
+    const targetCategoryKey = findCategoryKey(rawKey);
+
     if (targetCategoryKey) {
-      // We found a matching category! Let's normalize its fields.
       const rawCategoryData = parsed[rawKey];
-      if (rawCategoryData && typeof rawCategoryData === 'object') {
+      if (rawCategoryData && typeof rawCategoryData === 'object' && !Array.isArray(rawCategoryData)) {
         const catConfig = (CATEGORIES as any)[targetCategoryKey];
         const normalizedSubObj: any = {};
-        
-        // Let's create mapping for the fields in this category
-        const fieldConfig = catConfig.fields; // e.g. { style: "风格", lighting: "光影" }
-        
-        // Loop through English field keys and look them up in rawCategoryData
+        const fieldConfig = catConfig.fields;
+
         for (const [engFieldKey, cnFieldName] of Object.entries(fieldConfig) as [string, string][]) {
-          // Check if English key exists exactly
-          if (rawCategoryData[engFieldKey] !== undefined) {
-            normalizedSubObj[engFieldKey] = rawCategoryData[engFieldKey];
-          } else {
-            // Find a Chinese key that matches cnFieldName or engFieldKey
-            let foundVal: any = undefined;
-            for (const rawFieldKey of Object.keys(rawCategoryData)) {
-              if (rawFieldKey === cnFieldName || 
-                  rawFieldKey.toLowerCase() === engFieldKey.toLowerCase() ||
-                  rawFieldKey.includes(cnFieldName) || 
-                  cnFieldName.includes(rawFieldKey)) {
-                foundVal = rawCategoryData[rawFieldKey];
-                break;
-              }
-            }
-            normalizedSubObj[engFieldKey] = foundVal !== undefined ? foundVal : "";
-          }
+          const foundVal = findFieldValue(rawCategoryData, engFieldKey, cnFieldName);
+          normalizedSubObj[engFieldKey] = foundVal !== undefined ? foundVal : "";
         }
-        
-        normalized[targetCategoryKey] = normalizedSubObj;
+
+        const rawNonEmptyEntries = Object.entries(rawCategoryData).filter(([, val]) => valueToPromptText(val));
+        if (
+          rawNonEmptyEntries.length > 0 &&
+          Object.values(normalizedSubObj).every((val) => !valueToPromptText(val))
+        ) {
+          normalized[targetCategoryKey] = rawNonEmptyEntries
+            .map(([fieldKey, val]) => `${fieldKey}: ${valueToPromptText(val)}`)
+            .join("；");
+        } else {
+          normalized[targetCategoryKey] = normalizedSubObj;
+        }
       } else if (rawCategoryData !== undefined && rawCategoryData !== null) {
-        normalized[targetCategoryKey] = String(rawCategoryData);
+        normalized[targetCategoryKey] = Array.isArray(rawCategoryData)
+          ? rawCategoryData.filter(Boolean).map((item: any) => String(item).trim()).filter(Boolean).join("，")
+          : String(rawCategoryData);
       }
     } else {
-      // It's a top-level property like styleName or imageTags
-      let mappedKey = rawKey;
-      if (topKeys.includes(rawKey)) {
-        mappedKey = rawKey;
-      } else {
-        for (const [cnKey, engKey] of Object.entries(topChineseKeys)) {
-          if (rawKey.includes(cnKey) || cnKey.includes(rawKey)) {
-            mappedKey = engKey;
-            break;
-          }
-        }
-      }
-      normalized[mappedKey] = parsed[rawKey];
+      normalized[findTopKey(rawKey)] = parsed[rawKey];
     }
   }
 
@@ -532,12 +1138,8 @@ function normalizeParsedResponse(parsed: any): any {
   }
 
   // Ensure styleName and imageTags exist
-  if (normalized.styleName === undefined) {
-    normalized.styleName = parsed.styleName || "未命名风格";
-  }
-  if (normalized.imageTags === undefined) {
-    normalized.imageTags = parsed.imageTags || "";
-  }
+  normalized.styleName = toTagString(normalized.styleName !== undefined ? normalized.styleName : parsed.styleName) || "未命名风格";
+  normalized.imageTags = toTagString(normalized.imageTags !== undefined ? normalized.imageTags : parsed.imageTags);
 
   return normalized;
 }
@@ -561,29 +1163,31 @@ export async function unloadOllamaModel(config: AIConfig) {
 }
 
 export async function generatePromptFromImage(base64Data: string, mimeType: string, imageUrl: string | undefined, config: AIConfig, abortSignal?: AbortSignal, editInstruction?: string) {
-  try {
+  const provider = config.reversePromptProvider || config.provider;
+  const userText = editInstruction
+    ? SYSTEM_PROMPT + `\n\n额外要求：在进行上述分析的同时，请将以下修改应用到输出的内容当中：${editInstruction}\n请确保输出完全符合上述 JSON Schema 结构。`
+    : SYSTEM_PROMPT;
+  const maxAttempts = 5;
+
+  const requestResultText = async (attempt: number): Promise<string> => {
     let resultText = "";
-    const provider = config.reversePromptProvider || config.provider;
-    const userText = editInstruction
-      ? SYSTEM_PROMPT + `\n\n额外要求：在进行上述分析的同时，请将以下修改应用到输出的内容当中：${editInstruction}\n请确保输出完全符合上述 JSON Schema 结构。`
-      : SYSTEM_PROMPT;
-    
+
     if (provider === 'google') {
       const apiKey = config.googleApiKey || process.env.GEMINI_API_KEY;
       if (!apiKey) throw new Error('GEMINI_API_KEY is missing');
-      
+
       const res = await fetchWithTimeout(`https://generativelanguage.googleapis.com/v1beta/models/${config.googleModel || 'gemini-2.5-flash'}:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: abortSignal,
         body: JSON.stringify({
-          contents: [{ 
+          contents: [{
             parts: [
               { text: userText },
               { inline_data: { mime_type: mimeType, data: base64Data } }
-            ] 
+            ]
           }],
-          generationConfig: { 
+          generationConfig: {
             response_mime_type: "application/json",
             response_schema: getJsonSchema(),
             temperature: 0.1
@@ -609,7 +1213,7 @@ export async function generatePromptFromImage(base64Data: string, mimeType: stri
           format: "json",
           messages: [{ role: "user", content: userText, images: [base64Data] }],
           stream: false,
-          options: { temperature: 0.1 } // Removed num_gpu: 999 which causes 400s on some cloud providers
+          options: { temperature: 0.1 }
         })
       });
       if (!res.ok) {
@@ -627,16 +1231,21 @@ export async function generatePromptFromImage(base64Data: string, mimeType: stri
     } else if (provider === 'xiaomi') {
       const apiKey = config.xiaomiApiKey?.trim();
       if (!apiKey) throw new Error('Xiaomi API Key is missing');
-      
+
       const endpoint = 'https://api.xiaomimimo.com/v1/chat/completions';
       const model = config.xiaomiModel || 'mimo-v2.5';
       const maxRetries = 3;
       let res;
-      let attempt = 0;
-      
+      let httpAttempt = 0;
+
       const payloadImageUrl = (imageUrl && imageUrl.startsWith('http')) ? imageUrl : `data:${mimeType};base64,${base64Data}`;
-      
-      while (attempt < maxRetries) {
+      const retryPrompt = attempt > 0
+        ? `${userText}\n\n重要：这是第${attempt + 1}次请求。前一次输出为空或不符合结构。请务必重新完整分析图片，输出包含全部9个分类、styleName、imageTags的JSON；所有字段必须填写画面真实内容，禁止返回空对象、空字符串或省略字段。`
+        : userText;
+      const temperature = [0.1, 0.3, 0.25, 0.4, 0.35][attempt] ?? 0.3;
+      const useJsonResponseFormat = attempt < 3;
+
+      while (httpAttempt < maxRetries) {
         try {
           res = await fetchWithTimeout(endpoint, {
             method: 'POST',
@@ -651,23 +1260,23 @@ export async function generatePromptFromImage(base64Data: string, mimeType: stri
                 {
                   role: 'user',
                   content: [
-                    { type: 'text', text: userText },
+                    { type: 'text', text: retryPrompt },
                     { type: 'image_url', image_url: { url: payloadImageUrl } }
                   ]
                 }
               ],
-              response_format: { type: 'json_object' },
-              temperature: 0.1
+              response_format: useJsonResponseFormat ? { type: 'json_object' } : undefined,
+              temperature
             })
           });
-          
+
           if (res.ok) break;
-          attempt++;
-          if (attempt >= maxRetries) break;
+          httpAttempt++;
+          if (httpAttempt >= maxRetries) break;
           await new Promise(r => setTimeout(r, 1000));
         } catch (e) {
-          attempt++;
-          if (attempt >= maxRetries) throw e;
+          httpAttempt++;
+          if (httpAttempt >= maxRetries) throw e;
           await new Promise(r => setTimeout(r, 1000));
         }
       }
@@ -679,44 +1288,89 @@ export async function generatePromptFromImage(base64Data: string, mimeType: stri
       }
 
       const response = await res.json();
-      resultText = response.choices?.[0]?.message?.content || "";
+      resultText = messageContentToString(response.choices?.[0]?.message?.content);
     } else {
-       throw new Error(`当前图片反推暂不支持 ${provider} 提供商`);
+      throw new Error(`当前图片反推暂不支持 ${provider} 提供商`);
     }
 
-    if (!resultText) throw new Error("API returned no content");
-    
-    let parsed;
+    return resultText;
+  };
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
-      parsed = parseCleanJSON(resultText);
-    } catch (parseErr: any) {
-      console.error("Failed to parse JSON response:", resultText);
-      throw new Error(`The model response is not valid JSON. Raw output: ${resultText.substring(0, 200)}...`);
-    }
+      const resultText = await requestResultText(attempt);
+      if (!resultText) throw new Error("API returned no content");
 
-    // Normalize parsed response to ensure consistent structure & keys
-    parsed = normalizeParsedResponse(parsed);
+      let parsed: any;
+      try {
+        parsed = parseCleanJSON(resultText);
+      } catch (parseErr: any) {
+        const fallbackText = resultText.replace(/```(?:json)?/gi, "").replace(/```/g, "").trim();
+        if (fallbackText) {
+          parsed = { prompt: fallbackText };
+        } else {
+          console.error("Failed to parse JSON response:", resultText);
+          throw new Error(`The model response is not valid JSON. Raw output: ${resultText.substring(0, 300)}...`);
+        }
+      }
 
-    const { styleName, imageTags, ...structuredPrompt } = parsed;
-    
-    const stringPrompt = buildStringPrompt(structuredPrompt);
-    
-    if (!stringPrompt) {
-      console.error("JSON did not match the expected schema. Parsed object:", parsed);
-      throw new Error(`The model returned valid JSON but it missed the required categories (e.g. styleAndEffect). Raw output: ${resultText.substring(0, 300)}...`);
+      const cleanedRawText = resultText.replace(/```(?:json)?/gi, "").replace(/```/g, "").trim();
+      if (
+        parsed &&
+        typeof parsed === 'object' &&
+        !Array.isArray(parsed) &&
+        Object.keys(parsed).length === 0 &&
+        cleanedRawText &&
+        cleanedRawText !== '{}'
+      ) {
+        parsed = { prompt: cleanedRawText };
+      }
+
+      if (typeof parsed === 'string' && parsed.trim()) {
+        parsed = { prompt: parsed.trim() };
+      }
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        parsed = { prompt: parsed.map((item: any) => String(item)).join("，") };
+      }
+
+      const rawParsed = parsed;
+      const normalized = normalizeParsedResponse(rawParsed);
+      const { styleName, imageTags, ...structuredPrompt } = normalized;
+
+      let stringPrompt = buildStringPrompt(structuredPrompt);
+      if (!stringPrompt) {
+        stringPrompt = buildFallbackPrompt(rawParsed);
+      }
+
+      if (!stringPrompt) {
+        console.error("JSON did not match the expected schema. Parsed object:", normalized, "Raw parsed object:", rawParsed);
+        throw new Error(`The model returned valid JSON but it missed the required categories (e.g. styleAndEffect). Raw output: ${resultText.substring(0, 500)}...`);
+      }
+
+      return {
+        prompt: stringPrompt,
+        structuredPrompt,
+        negativePrompt: NEGATIVE_PROMPT,
+        styleName: styleName || "未命名风格",
+        imageTags: imageTags || ""
+      };
+    } catch (err: any) {
+      const message = err.message || "";
+      const retryable = message.includes("not valid JSON") ||
+        message.includes("missed the required categories") ||
+        message.includes("API returned no content");
+
+      if (!retryable || attempt >= maxAttempts - 1) {
+        console.error("Reverse Prompt Error:", err);
+        throw new Error(message || "Failed to generate prompt from image.");
+      }
+
+      console.warn(`Reverse prompt retry ${attempt + 2}/${maxAttempts}: ${message}`);
+      await new Promise(r => setTimeout(r, 800 * (attempt + 1)));
     }
-    
-    return {
-      prompt: stringPrompt,
-      structuredPrompt,
-      negativePrompt: NEGATIVE_PROMPT,
-      styleName: styleName || "未命名风格",
-      imageTags: imageTags || ""
-    };
-  } catch (err: any) {
-    console.error("Reverse Prompt Error:", err);
-    throw new Error(err.message || "Failed to generate prompt from image.");
   }
+
+  throw new Error("Failed to generate prompt from image.");
 }
 
 export async function editPromptWithSubject(masterPrompt: string, targetProduct: string, config: AIConfig) {

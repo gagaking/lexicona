@@ -33,7 +33,7 @@ import {
   Tag,
   Bone,
 } from "lucide-react";
-import { getDirectImageUrl, mirrorPrompt } from "../lib/utils";
+import { getCompressedImageDataUrl, getDirectImageUrl, mirrorPrompt } from "../lib/utils";
 import {
   generateNewPrompts,
   generatePromptsFromCombinations,
@@ -803,19 +803,26 @@ export function Gallery({ onOpenReverse }: { onOpenReverse?: () => void }) {
 
     try {
       setDepthMapLoading((prev) => ({ ...prev, [asset.id]: true }));
-      const resp = await fetch(asset.imageUrl);
-      const blob = await resp.blob();
-      const b64 = await new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result);
-        reader.readAsDataURL(blob);
-      });
+      const b64 = await getCompressedImageDataUrl(asset.imageUrl, 1600, 0.9);
       const depthResp = await fetch("/api/depth-map", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ image: b64, modelPath: aiConfig.depthModelPath }),
       });
-      const data = await depthResp.json();
+      let data;
+      try {
+        data = await depthResp.json();
+      } catch {
+        throw new Error(`HTTP error! status: ${depthResp.status}`);
+      }
+      if (!depthResp.ok) {
+        const detail = [data?.error, data?.hint].filter(Boolean).join(" ");
+        throw new Error(
+          detail
+            ? `HTTP error ${depthResp.status}: ${detail}`
+            : `HTTP error! status: ${depthResp.status}`,
+        );
+      }
       if (data.success && data.depthMapUrl) {
         setReversePromptPairs((prev) =>
           prev.map((p) =>

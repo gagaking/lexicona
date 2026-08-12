@@ -9,14 +9,59 @@ const APP_DIR = (() => {
   return path.resolve(__dirname, '..');
 })();
 const GPU_ENV = path.join(APP_DIR, 'gpu_env');
-const MODELS_DIR = path.join(APP_DIR, 'models');
 const PYTHON_VENV = path.join(GPU_ENV, 'Scripts', 'python.exe');
+const RESOURCES_DIR = (() => {
+  try { const { app } = require('electron'); if (app.isPackaged) return process.resourcesPath; } catch (_) {}
+  return null;
+})();
+const MODELS_DIR = RESOURCES_DIR && fs.existsSync(path.join(RESOURCES_DIR, 'models'))
+  ? path.join(RESOURCES_DIR, 'models')
+  : path.join(APP_DIR, 'models');
+const DEFAULT_MODEL = path.join(MODELS_DIR, 'depth_anything_v2_vitl.pth');
+
+function getDepthEngine() {
+  const candidates = [];
+  if (RESOURCES_DIR) {
+    candidates.push(path.join(RESOURCES_DIR, 'depth-engine', 'depth-engine.exe'));
+    candidates.push(path.join(RESOURCES_DIR, 'run_depth_anything', 'run_depth_anything.exe'));
+  }
+  candidates.push(path.join(path.resolve(__dirname, '..'), 'build', 'depth-engine', 'depth-engine.exe'));
+  return candidates.find((p) => fs.existsSync(p)) || null;
+}
+
+function diagnoseEnvironment() {
+  const engine = getDepthEngine();
+  const python = fs.existsSync(PYTHON_VENV) ? PYTHON_VENV : null;
+  const modelFound = fs.existsSync(DEFAULT_MODEL);
+  const issues = [];
+
+  if (!engine && !python) {
+    issues.push('未找到内置深度引擎，也没有可用的 Python 环境');
+  } else if (!engine) {
+    issues.push('未找到内置深度引擎，将回退到 Python 环境');
+  }
+  if (!modelFound) {
+    issues.push('默认模型不存在: ' + DEFAULT_MODEL);
+  }
+
+  return {
+    runtimeReady: Boolean(engine || python),
+    canAutoStart: Boolean(engine || python) && modelFound,
+    engineFound: Boolean(engine),
+    enginePath: engine,
+    engineSize: engine && fs.existsSync(engine) ? fs.statSync(engine).size : 0,
+    pythonFound: Boolean(python),
+    pythonPath: python,
+    modelFound,
+    modelPath: DEFAULT_MODEL,
+    modelSize: modelFound ? fs.statSync(DEFAULT_MODEL).size : 0,
+    issues,
+  };
+}
 
 // Known local development environment paths (for offline deployment)
 function findLocalEnv() {
   const searchPaths = [
-    // Same machine dev environment
-    'C:\\Users\\sa\\Documents\\lexicona\\gpu_env',
     // If installed via win-unpacked, check the release dir
     path.join(APP_DIR, '..', 'gpu_env'),
     // Adjacent to the app directory
@@ -26,7 +71,7 @@ function findLocalEnv() {
     const py = path.join(sp, 'Scripts', 'python.exe');
     if (fs.existsSync(py)) {
       try {
-        require('child_process').execSync('"' + py + '" -c "import torch; assert torch.cuda.is_available()"', { timeout: 10000 });
+        require('child_process').execSync('"' + py + '" -c "import torch, cv2"', { timeout: 10000 });
         return sp;
       } catch(_) {}
     }
@@ -73,15 +118,38 @@ function execWithProgress(cmd, opts, onLine) {
 }
 
 async function checkSetup() {
+  if (getDepthEngine()) return false;
   if (!fs.existsSync(PYTHON_VENV)) { return true; }
   try {
-    await execAsync('"' + PYTHON_VENV + '" -c "import torch; assert torch.cuda.is_available()"', { timeout: 10000 });
+    await execAsync('"' + PYTHON_VENV + '" -c "import torch, cv2"', { timeout: 10000 });
     return false;
   } catch(e) { return true; }
 }
 
 async function setupPython(onProgress) {
   onProgress({ step: 'check', message: '检查 Python 3.10 环境...', progress: 0 });
+
+  const depthEngine = getDepthEngine();
+  if (depthEngine && fs.existsSync(DEFAULT_MODEL)) {
+    onProgress({ step: 'done', message: '内置深度引擎与模型已就绪。', progress: 1 });
+    return;
+  }
+  if (depthEngine) {
+    onProgress({ step: 'model', message: '检查深度图模型...', progress: 0.6 });
+    const modelPath = DEFAULT_MODEL;
+    if (!fs.existsSync(modelPath)) {
+      try {
+        onProgress({ step: 'model', message: '下载深度图模型 (~1.34 GB)...', progress: 0.7 });
+        await downloadWithProgress('https://huggingface.co/depth-anything/Depth-Anything-V2-Large/resolve/main/depth_anything_v2_vitl.pth', modelPath, p => {
+          onProgress({ step: 'model', message: '下载深度图模型...', progress: 0.7 + p * 0.28 });
+        });
+      } catch(e) {
+        onProgress({ step: 'model_warn', message: '模型自动下载失败，可稍后手动下载放入 models/ 目录。', progress: 0.99 });
+      }
+    }
+    onProgress({ step: 'done', message: '内置深度引擎已就绪。', progress: 1 });
+    return;
+  }
 
   // First, try to use a locally pre-built environment (offline deployment)
   const localEnv = findLocalEnv();
@@ -213,4 +281,4 @@ async function downloadWithProgress(url, dest, onProgress) {
   fs.writeFileSync(dest, buf);
 }
 
-module.exports = { checkSetup, setupPython };
+module.exports = { checkSetup, setupPython, diagnoseEnvironment };

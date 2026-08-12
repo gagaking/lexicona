@@ -12,7 +12,10 @@
     "lint": "tsc --noEmit",
     "electron-dev": "electron .",
     "build:electron": "npm run build && electron-builder",
+    "build:depth-engine": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-depth-engine.ps1",
+    "build:electron:full": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-full-zip.ps1",
     "pack": "electron-builder --dir",
+    "pack:full": "npm run build:depth-engine && electron-builder --dir --config electron-builder.full.yml",
     "dist": "electron-builder"
   },
   "dependencies": {
@@ -28,6 +31,7 @@
     "file-saver": "^2.0.5",
     "fuse.js": "^7.3.0",
     "idb": "^8.0.3",
+    "jsonrepair": "^3.15.0",
     "jszip": "^3.10.1",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",

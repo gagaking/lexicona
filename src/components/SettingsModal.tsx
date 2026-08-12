@@ -7,6 +7,7 @@ import {
   Save,
   ExternalLink,
   FileSpreadsheet,
+  FolderOpen,
   Trash2,
   ChevronDown,
 } from "lucide-react";
@@ -23,6 +24,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
   const [fetchingRemoteConfig, setFetchingRemoteConfig] = useState(false);
   const [downloadingOffline, setDownloadingOffline] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const depthFileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setFormData(aiConfig);
@@ -67,6 +69,12 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
       setSaved(false);
       onClose();
     }, 1000);
+  };
+  const handleSelectDepthModel = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setFormData({ ...formData, depthModelPath: (file as any).path || file.name });
+    }
   };
 
   const handleFetchRemoteCsv = async () => {
@@ -648,8 +656,13 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                   <span className="text-sm font-medium text-[#1E1E1E]">深度图模型</span>
                   <span className="text-xs text-[#7A7A7A] font-sans">~1.34 GB</span>
                 </div>
-                <p className="text-xs text-[#A3A3A3] font-sans mb-3">Depth Anything V2 vitl 模型权重文件，位于项目目录 models/ 下。</p>
-                <div className="text-xs text-[#A3A3A3] font-sans">模型路径: {aiConfig.depthModelPath || "未配置"}</div>
+                <p className="text-xs text-[#A3A3A3] font-sans mb-3">Depth Anything V2 vitl 模型权重文件 (.pth)。点击下方按钮选择模型文件。</p>
+                <div className="flex items-center gap-2">
+                  <input type="file" accept=".pth" className="hidden" ref={depthFileRef} onChange={handleSelectDepthModel} />
+                  <input type="text" readOnly value={formData.depthModelPath || ""} placeholder="D:\画廊app\models\depth_anything_v2_vitl.pth" className="flex-1 text-xs px-3 py-2 border border-[#E0E0E0] bg-white text-[#1E1E1E] font-sans" />
+                  <button onClick={() => depthFileRef.current?.click()} className="text-xs px-3 py-2 border border-[#1E1E1E] text-[#1E1E1E] hover:bg-[#1E1E1E] hover:text-white transition-colors font-sans whitespace-nowrap flex items-center"><FolderOpen className="w-3.5 h-3.5 mr-1" />浏览</button>
+                </div>
+                <div className="mt-1.5 text-xs text-[#A3A3A3] font-sans">当前路径: {aiConfig.depthModelPath || "未配置"}</div>
               </div>
             </div>
           </div>
