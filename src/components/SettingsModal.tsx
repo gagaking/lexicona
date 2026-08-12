@@ -327,7 +327,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[#333130]/40 backdrop-blur-sm p-4 font-serif">
-      <div className="bg-white w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden relative shadow-2xl rounded-none">
+      <div className="bg-white w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden relative shadow-2xl rounded-none">
         <div className="flex justify-between items-center px-6 py-4 border-b border-[#F0F0F0] bg-white sticky top-0 z-10 shrink-0">
           <div className="flex items-center gap-4">
             <h2 className="text-xl font-medium text-[#1E1E1E]">设置面板</h2>
@@ -409,8 +409,8 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
           </div>
 
           {/* AI Config */}
-          <div className="border-t border-[#F0F0F0] pt-6 space-y-6">
-            <div className="flex justify-between items-start">
+          <div className="border-t border-[#F0F0F0] pt-6 space-y-5">
+            <div className="flex items-center justify-between">
               <h2 className="text-base font-medium text-[#1E1E1E]">
                 AI 接口
                 <span
@@ -421,35 +421,9 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                   {downloadingOffline ? "构建中..." : "设置"}
                 </span>
               </h2>
-              <div className="w-64">
-                <div className="flex items-center justify-between mb-1">
-                  <label className="block text-xs uppercase tracking-wider text-[#A3A3A3] font-sans">
-                    温度 (TEMPERATURE) :{" "}
-                    {(formData.temperature ?? 0.7).toFixed(1)}
-                  </label>
-                </div>
-                <input
-                  type="range"
-                  min="0"
-                  max="2"
-                  step="0.1"
-                  value={formData.temperature ?? 0.7}
-                  onChange={(e) =>
-                    setFormData({
-                      ...formData,
-                      temperature: parseFloat(e.target.value),
-                    })
-                  }
-                  className="w-full h-1 bg-[#E0E0E0] rounded-lg appearance-none cursor-pointer accent-[#1E1E1E]"
-                />
-                <div className="flex justify-between text-[10px] text-[#A3A3A3] mt-1 font-sans">
-                  <span>更严谨 (推荐)</span>
-                  <span>更发散</span>
-                </div>
-              </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 border-b border-[#F0F0F0] pb-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-b border-[#F0F0F0] pb-5">
               <div>
                 <label className="block text-xs uppercase tracking-wider text-[#A3A3A3] mb-2 font-sans">
                   默认 AI 模型供应商
@@ -489,7 +463,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 gap-4">
               {/* Google Config */}
               <div
                 className={`space-y-4 p-4 border transition-colors ${formData.provider === "google" || formData.reversePromptProvider === "google" ? "border-blue-500 bg-blue-50/30 opacity-100 shadow-sm" : "border-[#E0E0E0] opacity-40 bg-white"}`}
@@ -525,34 +499,36 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                     <ExternalLink className="w-3 h-3" /> 获取 API Key
                   </a>
                 </div>
-                <div>
-                  <label className="block text-xs uppercase tracking-wider text-[#A3A3A3] mb-2 font-sans">
-                    API 密钥
-                  </label>
-                  <input
-                    type="password"
-                    value={formData.googleApiKey || ""}
-                    onChange={(e) =>
-                      setFormData({ ...formData, googleApiKey: e.target.value })
-                    }
-                    placeholder="留空使用系统内置 KEY"
-                    className="w-full bg-white border border-[#E0E0E0] text-[#1E1E1E] text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 p-2.5 outline-none font-sans rounded-none transition-colors"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs uppercase tracking-wider text-[#A3A3A3] mb-2 font-sans">
-                    模型名称
-                  </label>
-                  <ModelManager
-                    managing={managingProvider === "google"}
-                    options={getModelOptions(formData, "google")}
-                    value={getSelectedModelName(formData, "google")}
-                    onSelect={(name) => handleModelSelect("google", name)}
-                    onAdd={(label, name) =>
-                      handleAddModel("google", label, name)
-                    }
-                    onDelete={(name) => handleDeleteModel("google", name)}
-                  />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className={managingProvider === "google" ? "md:col-span-2" : ""}>
+                    <label className="block text-xs uppercase tracking-wider text-[#A3A3A3] mb-2 font-sans">
+                      API 密钥
+                    </label>
+                    <input
+                      type="password"
+                      value={formData.googleApiKey || ""}
+                      onChange={(e) =>
+                        setFormData({ ...formData, googleApiKey: e.target.value })
+                      }
+                      placeholder="留空使用系统内置 KEY"
+                      className="w-full bg-white border border-[#E0E0E0] text-[#1E1E1E] text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 p-2.5 outline-none font-sans rounded-none transition-colors"
+                    />
+                  </div>
+                  <div className={managingProvider === "google" ? "md:col-span-2" : ""}>
+                    <label className="block text-xs uppercase tracking-wider text-[#A3A3A3] mb-2 font-sans">
+                      模型名称
+                    </label>
+                    <ModelManager
+                      managing={managingProvider === "google"}
+                      options={getModelOptions(formData, "google")}
+                      value={getSelectedModelName(formData, "google")}
+                      onSelect={(name) => handleModelSelect("google", name)}
+                      onAdd={(label, name) =>
+                        handleAddModel("google", label, name)
+                      }
+                      onDelete={(name) => handleDeleteModel("google", name)}
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -591,37 +567,39 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                     <ExternalLink className="w-3 h-3" /> 获取 API Key
                   </a>
                 </div>
-                <div>
-                  <label className="block text-xs uppercase tracking-wider text-[#A3A3A3] mb-2 font-sans">
-                    API 密钥
-                  </label>
-                  <input
-                    type="password"
-                    value={formData.deepseekApiKey || ""}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        deepseekApiKey: e.target.value,
-                      })
-                    }
-                    placeholder="DeepSeek API Key"
-                    className="w-full bg-white border border-[#E0E0E0] text-[#1E1E1E] text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 p-2.5 outline-none font-sans rounded-none transition-colors"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs uppercase tracking-wider text-[#A3A3A3] mb-2 font-sans">
-                    模型名称
-                  </label>
-                  <ModelManager
-                    managing={managingProvider === "deepseek"}
-                    options={getModelOptions(formData, "deepseek")}
-                    value={getSelectedModelName(formData, "deepseek")}
-                    onSelect={(name) => handleModelSelect("deepseek", name)}
-                    onAdd={(label, name) =>
-                      handleAddModel("deepseek", label, name)
-                    }
-                    onDelete={(name) => handleDeleteModel("deepseek", name)}
-                  />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className={managingProvider === "deepseek" ? "md:col-span-2" : ""}>
+                    <label className="block text-xs uppercase tracking-wider text-[#A3A3A3] mb-2 font-sans">
+                      API 密钥
+                    </label>
+                    <input
+                      type="password"
+                      value={formData.deepseekApiKey || ""}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          deepseekApiKey: e.target.value,
+                        })
+                      }
+                      placeholder="DeepSeek API Key"
+                      className="w-full bg-white border border-[#E0E0E0] text-[#1E1E1E] text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 p-2.5 outline-none font-sans rounded-none transition-colors"
+                    />
+                  </div>
+                  <div className={managingProvider === "deepseek" ? "md:col-span-2" : ""}>
+                    <label className="block text-xs uppercase tracking-wider text-[#A3A3A3] mb-2 font-sans">
+                      模型名称
+                    </label>
+                    <ModelManager
+                      managing={managingProvider === "deepseek"}
+                      options={getModelOptions(formData, "deepseek")}
+                      value={getSelectedModelName(formData, "deepseek")}
+                      onSelect={(name) => handleModelSelect("deepseek", name)}
+                      onAdd={(label, name) =>
+                        handleAddModel("deepseek", label, name)
+                      }
+                      onDelete={(name) => handleDeleteModel("deepseek", name)}
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -660,34 +638,36 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                     <ExternalLink className="w-3 h-3" /> 获取 API Key
                   </a>
                 </div>
-                <div>
-                  <label className="block text-xs uppercase tracking-wider text-[#A3A3A3] mb-2 font-sans">
-                    API 密钥
-                  </label>
-                  <input
-                    type="password"
-                    value={formData.xiaomiApiKey || ""}
-                    onChange={(e) =>
-                      setFormData({ ...formData, xiaomiApiKey: e.target.value })
-                    }
-                    placeholder="Xiaomi MiMo API Key"
-                    className="w-full bg-white border border-[#E0E0E0] text-[#1E1E1E] text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 p-2.5 outline-none font-sans rounded-none transition-colors"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs uppercase tracking-wider text-[#A3A3A3] mb-2 font-sans">
-                    模型名称
-                  </label>
-                  <ModelManager
-                    managing={managingProvider === "xiaomi"}
-                    options={getModelOptions(formData, "xiaomi")}
-                    value={getSelectedModelName(formData, "xiaomi")}
-                    onSelect={(name) => handleModelSelect("xiaomi", name)}
-                    onAdd={(label, name) =>
-                      handleAddModel("xiaomi", label, name)
-                    }
-                    onDelete={(name) => handleDeleteModel("xiaomi", name)}
-                  />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className={managingProvider === "xiaomi" ? "md:col-span-2" : ""}>
+                    <label className="block text-xs uppercase tracking-wider text-[#A3A3A3] mb-2 font-sans">
+                      API 密钥
+                    </label>
+                    <input
+                      type="password"
+                      value={formData.xiaomiApiKey || ""}
+                      onChange={(e) =>
+                        setFormData({ ...formData, xiaomiApiKey: e.target.value })
+                      }
+                      placeholder="Xiaomi MiMo API Key"
+                      className="w-full bg-white border border-[#E0E0E0] text-[#1E1E1E] text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 p-2.5 outline-none font-sans rounded-none transition-colors"
+                    />
+                  </div>
+                  <div className={managingProvider === "xiaomi" ? "md:col-span-2" : ""}>
+                    <label className="block text-xs uppercase tracking-wider text-[#A3A3A3] mb-2 font-sans">
+                      模型名称
+                    </label>
+                    <ModelManager
+                      managing={managingProvider === "xiaomi"}
+                      options={getModelOptions(formData, "xiaomi")}
+                      value={getSelectedModelName(formData, "xiaomi")}
+                      onSelect={(name) => handleModelSelect("xiaomi", name)}
+                      onAdd={(label, name) =>
+                        handleAddModel("xiaomi", label, name)
+                      }
+                      onDelete={(name) => handleDeleteModel("xiaomi", name)}
+                    />
+                  </div>
                 </div>
               </div>
 

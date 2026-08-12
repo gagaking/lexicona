@@ -96,7 +96,6 @@ export interface AIConfig {
   remoteCsvUrl?: string;
   reversePromptProvider?: AIProvider;
   reversePromptConcurrency?: number;
-  temperature?: number;
   depthModelPath?: string;
 }
 
@@ -112,7 +111,6 @@ export const DEFAULT_AI_CONFIG: AIConfig = {
   remoteCsvUrl: 'https://cdn.jsdelivr.net/gh/gagaking/lexicona@main/12.csv',
   reversePromptProvider: 'xiaomi',
   reversePromptConcurrency: 3,
-  temperature: 0.7,
   depthModelPath: '',
 };
 

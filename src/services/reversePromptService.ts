@@ -1342,7 +1342,7 @@ export async function editPromptWithSubject(masterPrompt: string, targetProduct:
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{ parts: [{ text: userPrompt }] }],
-          generationConfig: { temperature: config.temperature ?? 0.7 }
+          generationConfig: { temperature: 0.7 }
         })
       });
 

@@ -82,6 +82,7 @@ export const dbStore = {
     delete rawConfig.ollamaEndpoint;
     delete rawConfig.ollamaModel;
     delete rawConfig.reversePromptOllamaModel;
+    delete rawConfig.temperature;
     if (!mergedConfig.modelOptions) {
       mergedConfig.modelOptions = {};
     }

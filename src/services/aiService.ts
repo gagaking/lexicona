@@ -31,7 +31,7 @@ export const generateChatResponse = async (
             { role: 'user', parts: userParts }
         ],
         generationConfig: {
-          temperature: config.temperature ?? 0.7,
+          temperature: 0.7,
         }
       };
 
@@ -80,7 +80,7 @@ export const generateChatResponse = async (
         body: JSON.stringify({
           model: model,
           messages: messages,
-          temperature: config.temperature ?? 0.7
+          temperature: 0.7
         })
       });
 
@@ -138,7 +138,7 @@ export const generateChatResponse = async (
         body: JSON.stringify({
           model: model,
           messages: messages,
-          temperature: config.temperature ?? 0.7
+          temperature: 0.7
         })
       });
 
@@ -307,7 +307,7 @@ async function callAIVision(systemPrompt: string, base64Image: string, config: A
           }],
           generationConfig: { 
             response_mime_type: "application/json",
-            temperature: config.temperature ?? 0.7
+            temperature: 0.7
           }
         })
       });
@@ -357,7 +357,7 @@ async function callAIVision(systemPrompt: string, base64Image: string, config: A
               }
             ],
             response_format: { type: 'json_object' },
-            temperature: config.temperature ?? 0.7
+            temperature: 0.7
           })
         });
       } catch (e: any) {
@@ -697,7 +697,7 @@ async function callAI(systemPrompt: string, config: AIConfig) {
             contents: [{ parts: [{ text: systemPrompt }] }],
             generationConfig: { 
               response_mime_type: "application/json",
-              temperature: config.temperature ?? 0.7
+              temperature: 0.7
             }
           })
         });
@@ -754,7 +754,7 @@ async function callAI(systemPrompt: string, config: AIConfig) {
               { role: 'user', content: "Please generate the output according to the system prompt's precise JSON structure." }
             ],
             response_format: { type: 'json_object' },
-            temperature: config.temperature ?? 0.7
+            temperature: 0.7
           })
         });
       } catch (e: any) {
@@ -801,7 +801,7 @@ async function callAI(systemPrompt: string, config: AIConfig) {
               { role: 'user', content: "Please generate the output according to the system prompt's precise JSON structure." }
             ],
             response_format: { type: 'json_object' },
-            temperature: config.temperature ?? 0.7
+            temperature: 0.7
           })
         });
       } catch (e: any) {

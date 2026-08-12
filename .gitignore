@@ -21,6 +21,7 @@ release/
 release-full/
 release-full-next/
 release-full-next6/
+release-full-next*/
 asar_content.asar
 *.bak
 temp-*.cjs
