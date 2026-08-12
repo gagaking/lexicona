@@ -1,6 +1,12 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useAppContext } from "../store";
-import { AIProvider } from "../types";
+import {
+  AIConfig,
+  AIProvider,
+  AIModelOption,
+  getModelOptions,
+  getSelectedModelName,
+} from "../types";
 import {
   CloudDownload,
   X,
@@ -9,18 +15,132 @@ import {
   FileSpreadsheet,
   FolderOpen,
   Trash2,
-  ChevronDown,
+  Plus,
 } from "lucide-react";
 import { parseCSV } from "../services/csvParser";
 import { dbStore } from "../lib/db";
+
+const MODEL_FIELDS: Record<AIProvider, keyof AIConfig> = {
+  google: "googleModel",
+  deepseek: "deepseekModel",
+  xiaomi: "xiaomiModel",
+};
+
+function ModelManager({
+  managing,
+  options,
+  value,
+  onSelect,
+  onAdd,
+  onDelete,
+}: {
+  managing: boolean;
+  options: AIModelOption[];
+  value: string;
+  onSelect: (name: string) => void;
+  onAdd: (label: string, name: string) => boolean;
+  onDelete: (name: string) => void;
+}) {
+  const [label, setLabel] = useState("");
+  const [name, setName] = useState("");
+
+  const submitAdd = () => {
+    const labelValue = label.trim();
+    const nameValue = name.trim();
+    if (!labelValue || !nameValue) {
+      alert("请填写模型缩写和真实 API 模型名称");
+      return;
+    }
+    if (onAdd(labelValue, nameValue)) {
+      setLabel("");
+      setName("");
+    }
+  };
+
+  if (!managing) {
+    return (
+      <select
+        value={value}
+        onChange={(e) => onSelect(e.target.value)}
+        className="w-full bg-white border border-[#E0E0E0] text-[#1E1E1E] text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 p-2.5 outline-none font-sans rounded-none cursor-pointer transition-colors"
+      >
+        {options.map((option) => (
+          <option key={option.name} value={option.name}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
+  return (
+    <div className="space-y-2 border border-[#E0E0E0] bg-[#FAFAFA] p-2">
+      <div className="space-y-1.5">
+        {options.map((option) => (
+          <div key={option.name} className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => onSelect(option.name)}
+              className={`flex-1 min-w-0 text-left px-2 py-1.5 text-sm border transition-colors ${
+                value === option.name
+                  ? "border-blue-500 bg-blue-50/50 text-[#1E1E1E]"
+                  : "border-[#E0E0E0] bg-white text-[#333130] hover:border-[#A3A3A3]"
+              }`}
+            >
+              <span className="block truncate">{option.label}</span>
+              <span className="block truncate text-[10px] text-[#A3A3A3] font-mono">
+                {option.name}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onDelete(option.name)}
+              title="删除模型"
+              className="p-2 text-[#A3A3A3] hover:text-red-500 hover:bg-red-50 transition-colors"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ))}
+        {options.length === 0 && (
+          <p className="text-xs text-[#A3A3A3] font-sans">暂无模型，请添加。</p>
+        )}
+      </div>
+      <div className="border-t border-[#E0E0E0] pt-2 space-y-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <input
+            type="text"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder="显示缩写，例如 G3.5"
+            className="px-2 py-1.5 text-xs border border-[#E0E0E0] bg-white focus:border-blue-500 focus:outline-none"
+          />
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="真实 API 完整名称"
+            className="px-2 py-1.5 text-xs border border-[#E0E0E0] bg-white focus:border-blue-500 focus:outline-none"
+          />
+        </div>
+        <button
+          type="button"
+          onClick={submitAdd}
+          className="flex items-center gap-1 px-3 py-1.5 text-xs bg-[#1E1E1E] text-white hover:bg-black transition-colors"
+        >
+          <Plus className="w-3 h-3" /> 添加模型
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export function SettingsModal({ onClose }: { onClose: () => void }) {
   const { aiConfig, updateAiConfig, addAssets, clearAllCache, reversePromptPairs, setReversePromptPairs } =
     useAppContext();
   const [formData, setFormData] = useState(aiConfig);
   const [saved, setSaved] = useState(false);
-  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
-  const [fetchingOllama, setFetchingOllama] = useState(false);
+  const [managingProvider, setManagingProvider] = useState<AIProvider | null>(null);
   const [fetchingRemoteConfig, setFetchingRemoteConfig] = useState(false);
   const [downloadingOffline, setDownloadingOffline] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -60,6 +180,47 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
       await dbStore.setReversePromptPairs([]);
       alert("反推记录已清除");
     }
+  };
+
+  const handleModelSelect = (provider: AIProvider, name: string) => {
+    setFormData({
+      ...formData,
+      [MODEL_FIELDS[provider]]: name,
+    });
+  };
+
+  const handleAddModel = (provider: AIProvider, label: string, name: string) => {
+    const current = getModelOptions(formData, provider);
+    if (current.some((option) => option.name === name)) {
+      alert("该 API 模型名称已经存在");
+      return false;
+    }
+    const next = [...current, { label, name }];
+    setFormData({
+      ...formData,
+      modelOptions: {
+        ...formData.modelOptions,
+        [provider]: next,
+      },
+      [MODEL_FIELDS[provider]]: name,
+    });
+    return true;
+  };
+
+  const handleDeleteModel = (provider: AIProvider, name: string) => {
+    const current = getModelOptions(formData, provider);
+    const next = current.filter((option) => option.name !== name);
+    const update: any = {
+      ...formData,
+      modelOptions: {
+        ...formData.modelOptions,
+        [provider]: next,
+      },
+    };
+    if (update[MODEL_FIELDS[provider]] === name) {
+      update[MODEL_FIELDS[provider]] = next[0]?.name || "";
+    }
+    setFormData(update);
   };
 
   const handleSave = async () => {
@@ -306,7 +467,6 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                   <option value="google">Google Gemini</option>
                   <option value="deepseek">DeepSeek</option>
                   <option value="xiaomi">Xiaomi MiMo</option>
-                  <option value="ollama">Ollama</option>
                 </select>
               </div>
               <div>
@@ -325,7 +485,6 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                 >
                   <option value="google">Google Gemini</option>
                   <option value="xiaomi">Xiaomi MiMo</option>
-                  <option value="ollama">Ollama (Vision)</option>
                 </select>
               </div>
             </div>
@@ -336,9 +495,27 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                 className={`space-y-4 p-4 border transition-colors ${formData.provider === "google" || formData.reversePromptProvider === "google" ? "border-blue-500 bg-blue-50/30 opacity-100 shadow-sm" : "border-[#E0E0E0] opacity-40 bg-white"}`}
               >
                 <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-medium text-[#1E1E1E]">
-                    Google Gemini
-                  </h3>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-medium text-[#1E1E1E]">
+                      Google Gemini
+                    </h3>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setManagingProvider(
+                          managingProvider === "google" ? null : "google",
+                        )
+                      }
+                      title={managingProvider === "google" ? "完成管理" : "添加模型"}
+                      className="p-1 text-[#7A7A7A] hover:text-[#1E1E1E] hover:bg-[#EAEAEA] transition-colors"
+                    >
+                      {managingProvider === "google" ? (
+                        <X className="w-3.5 h-3.5" />
+                      ) : (
+                        <Plus className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                  </div>
                   <a
                     href="https://aistudio.google.com/app/apikey"
                     target="_blank"
@@ -366,16 +543,16 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                   <label className="block text-xs uppercase tracking-wider text-[#A3A3A3] mb-2 font-sans">
                     模型名称
                   </label>
-                  <select
-                    value={formData.googleModel || "gemini-2.5-flash"}
-                    onChange={(e) =>
-                      setFormData({ ...formData, googleModel: e.target.value })
+                  <ModelManager
+                    managing={managingProvider === "google"}
+                    options={getModelOptions(formData, "google")}
+                    value={getSelectedModelName(formData, "google")}
+                    onSelect={(name) => handleModelSelect("google", name)}
+                    onAdd={(label, name) =>
+                      handleAddModel("google", label, name)
                     }
-                    className="w-full bg-white border border-[#E0E0E0] text-[#1E1E1E] text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 p-2.5 outline-none font-sans rounded-none cursor-pointer transition-colors"
-                  >
-                    <option value="gemini-2.5-flash">gemini-2.5-flash</option>
-                    <option value="gemini-3.5-flash">gemini-3.5-flash</option>
-                  </select>
+                    onDelete={(name) => handleDeleteModel("google", name)}
+                  />
                 </div>
               </div>
 
@@ -384,9 +561,27 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                 className={`space-y-4 p-4 border transition-colors ${formData.provider === "deepseek" ? "border-blue-500 bg-blue-50/30 opacity-100 shadow-sm" : "border-[#E0E0E0] opacity-40 bg-white"}`}
               >
                 <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-medium text-[#1E1E1E]">
-                    DeepSeek
-                  </h3>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-medium text-[#1E1E1E]">
+                      DeepSeek
+                    </h3>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setManagingProvider(
+                          managingProvider === "deepseek" ? null : "deepseek",
+                        )
+                      }
+                      title={managingProvider === "deepseek" ? "完成管理" : "添加模型"}
+                      className="p-1 text-[#7A7A7A] hover:text-[#1E1E1E] hover:bg-[#EAEAEA] transition-colors"
+                    >
+                      {managingProvider === "deepseek" ? (
+                        <X className="w-3.5 h-3.5" />
+                      ) : (
+                        <Plus className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                  </div>
                   <a
                     href="https://platform.deepseek.com/api_keys"
                     target="_blank"
@@ -417,23 +612,16 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                   <label className="block text-xs uppercase tracking-wider text-[#A3A3A3] mb-2 font-sans">
                     模型名称
                   </label>
-                  <select
-                    value={formData.deepseekModel || "deepseek-v4-flash"}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        deepseekModel: e.target.value,
-                      })
+                  <ModelManager
+                    managing={managingProvider === "deepseek"}
+                    options={getModelOptions(formData, "deepseek")}
+                    value={getSelectedModelName(formData, "deepseek")}
+                    onSelect={(name) => handleModelSelect("deepseek", name)}
+                    onAdd={(label, name) =>
+                      handleAddModel("deepseek", label, name)
                     }
-                    className="w-full bg-white border border-[#E0E0E0] text-[#1E1E1E] text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 p-2.5 outline-none font-sans rounded-none cursor-pointer transition-colors"
-                  >
-                    <option value="deepseek-v4-flash">deepseek-v4-flash</option>
-                    <option value="deepseek-v4-pro">deepseek-v4-pro</option>
-                    <option value="deepseek-chat">deepseek-chat (V3)</option>
-                    <option value="deepseek-reasoner">
-                      deepseek-reasoner (R1)
-                    </option>
-                  </select>
+                    onDelete={(name) => handleDeleteModel("deepseek", name)}
+                  />
                 </div>
               </div>
 
@@ -442,9 +630,27 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                 className={`space-y-4 p-4 border transition-colors ${formData.provider === "xiaomi" || formData.reversePromptProvider === "xiaomi" ? "border-blue-500 bg-blue-50/30 opacity-100 shadow-sm" : "border-[#E0E0E0] opacity-40 bg-white"}`}
               >
                 <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-medium text-[#1E1E1E]">
-                    Xiaomi MiMo
-                  </h3>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-medium text-[#1E1E1E]">
+                      Xiaomi MiMo
+                    </h3>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setManagingProvider(
+                          managingProvider === "xiaomi" ? null : "xiaomi",
+                        )
+                      }
+                      title={managingProvider === "xiaomi" ? "完成管理" : "添加模型"}
+                      className="p-1 text-[#7A7A7A] hover:text-[#1E1E1E] hover:bg-[#EAEAEA] transition-colors"
+                    >
+                      {managingProvider === "xiaomi" ? (
+                        <X className="w-3.5 h-3.5" />
+                      ) : (
+                        <Plus className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                  </div>
                   <a
                     href="https://platform.xiaomimimo.com"
                     target="_blank"
@@ -472,168 +678,19 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                   <label className="block text-xs uppercase tracking-wider text-[#A3A3A3] mb-2 font-sans">
                     模型名称
                   </label>
-                  <input
-                    type="text"
-                    value={formData.xiaomiModel || "mimo-v2.5"}
-                    onChange={(e) =>
-                      setFormData({ ...formData, xiaomiModel: e.target.value })
+                  <ModelManager
+                    managing={managingProvider === "xiaomi"}
+                    options={getModelOptions(formData, "xiaomi")}
+                    value={getSelectedModelName(formData, "xiaomi")}
+                    onSelect={(name) => handleModelSelect("xiaomi", name)}
+                    onAdd={(label, name) =>
+                      handleAddModel("xiaomi", label, name)
                     }
-                    placeholder="mimo-v2.5"
-                    className="w-full bg-white border border-[#E0E0E0] text-[#1E1E1E] text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 p-2.5 outline-none font-sans rounded-none transition-colors"
+                    onDelete={(name) => handleDeleteModel("xiaomi", name)}
                   />
                 </div>
               </div>
 
-              {/* Ollama Config */}
-              <div
-                className={`space-y-4 p-4 border transition-colors ${formData.provider === "ollama" || formData.reversePromptProvider === "ollama" ? "border-blue-500 bg-blue-50/30 opacity-100 shadow-sm" : "border-[#E0E0E0] opacity-40 bg-white"}`}
-              >
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-medium text-[#1E1E1E]">Ollama</h3>
-                  <a
-                    href="https://ollama.com/"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-xs text-[#1E1E1E] hover:underline flex items-center gap-1 font-sans"
-                  >
-                    <ExternalLink className="w-3 h-3" /> 前往官网
-                  </a>
-                </div>
-                <div>
-                  <label className="block text-xs uppercase tracking-wider text-[#A3A3A3] mb-2 font-sans">
-                    接口地址 (可填云端地址)
-                  </label>
-                  <input
-                    type="url"
-                    value={formData.ollamaEndpoint || ""}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        ollamaEndpoint: e.target.value,
-                      })
-                    }
-                    placeholder="http://127.0.0.1:11434"
-                    className="w-full bg-white border border-[#E0E0E0] text-[#1E1E1E] text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 p-2.5 outline-none font-sans rounded-none transition-colors"
-                  />
-                </div>
-                <div>
-                  <label className="flex justify-between items-center text-xs uppercase tracking-wider text-[#A3A3A3] mb-2 font-sans">
-                    <span>已部署模型 (普通对话)</span>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        setFetchingOllama(true);
-                        try {
-                          const url =
-                            (
-                              formData.ollamaEndpoint ||
-                              "http://127.0.0.1:11434"
-                            ).replace(/\/$/, "") + "/api/tags";
-                          const res = await fetch(url);
-                          const data = await res.json();
-                          if (data.models) {
-                            setOllamaModels(
-                              data.models.map((m: any) => m.name),
-                            );
-                          }
-                        } catch (e: any) {
-                          alert("获取 Ollama 模型失败: " + e.message);
-                        }
-                        setFetchingOllama(false);
-                      }}
-                      className="text-[#1E1E1E] hover:underline"
-                    >
-                      {fetchingOllama ? "获取中..." : "拉取列表"}
-                    </button>
-                  </label>
-                  <div className="relative flex items-center mb-4">
-                    <input
-                      type="text"
-                      value={formData.ollamaModel || ""}
-                      onChange={(e) =>
-                        setFormData({
-                          ...formData,
-                          ollamaModel: e.target.value,
-                        })
-                      }
-                      placeholder="llama3 (输入或从列表选择)"
-                      className="w-full bg-white border border-[#E0E0E0] text-[#1E1E1E] text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 p-2.5 outline-none font-sans rounded-none transition-colors pr-8"
-                    />
-                    {ollamaModels.length > 0 && (
-                      <>
-                        <select
-                          value=""
-                          onChange={(e) =>
-                            setFormData({
-                              ...formData,
-                              ollamaModel: e.target.value,
-                            })
-                          }
-                          className="absolute right-0 inset-y-0 w-8 opacity-0 cursor-pointer"
-                        >
-                          <option value="" disabled>
-                            选择
-                          </option>
-                          {ollamaModels.map((m) => (
-                            <option key={`normal-${m}`} value={m}>
-                              {m}
-                            </option>
-                          ))}
-                        </select>
-                        <div className="absolute right-2 pointer-events-none text-[#7A7A7A]">
-                          <ChevronDown className="w-4 h-4" />
-                        </div>
-                      </>
-                    )}
-                  </div>
-
-                  <label className="block text-xs uppercase tracking-wider text-[#A3A3A3] mb-2 font-sans">
-                    视觉模型 (反推专用)
-                  </label>
-                  <div className="relative flex items-center">
-                    <input
-                      type="text"
-                      value={formData.reversePromptOllamaModel || ""}
-                      onChange={(e) =>
-                        setFormData({
-                          ...formData,
-                          reversePromptOllamaModel: e.target.value,
-                        })
-                      }
-                      placeholder="llava (输入或从列表选择)"
-                      className="w-full bg-white border border-[#E0E0E0] text-[#1E1E1E] text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 p-2.5 outline-none font-sans rounded-none transition-colors pr-8"
-                    />
-                    {ollamaModels.length > 0 && (
-                      <>
-                        <select
-                          value=""
-                          onChange={(e) =>
-                            setFormData({
-                              ...formData,
-                              reversePromptOllamaModel: e.target.value,
-                            })
-                          }
-                          className="absolute right-0 inset-y-0 w-8 opacity-0 cursor-pointer"
-                        >
-                          <option value="" disabled>
-                            选择
-                          </option>
-                          {ollamaModels.map((m) => (
-                            <option key={`vision-${m}`} value={m}>
-                              {m}
-                            </option>
-                          ))}
-                        </select>
-                        <div className="absolute right-2 pointer-events-none text-[#7A7A7A]">
-                          <ChevronDown className="w-4 h-4" />
-                        </div>
-                      </>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              
             </div>
           </div>
 

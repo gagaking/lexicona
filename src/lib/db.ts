@@ -71,6 +71,20 @@ export const dbStore = {
     if (mergedConfig.googleModel === 'gemini-1.5-pro') {
       mergedConfig.googleModel = 'gemini-2.5-flash';
     }
+
+    const rawConfig = mergedConfig as any;
+    if (rawConfig.provider === 'ollama') {
+      mergedConfig.provider = 'xiaomi';
+    }
+    if (rawConfig.reversePromptProvider === 'ollama') {
+      mergedConfig.reversePromptProvider = 'xiaomi';
+    }
+    delete rawConfig.ollamaEndpoint;
+    delete rawConfig.ollamaModel;
+    delete rawConfig.reversePromptOllamaModel;
+    if (!mergedConfig.modelOptions) {
+      mergedConfig.modelOptions = {};
+    }
     
     return mergedConfig;
   },

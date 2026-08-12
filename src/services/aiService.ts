@@ -152,51 +152,7 @@ export const generateChatResponse = async (
       }
 
       return data.choices[0].message.content;
-    } else if (config.provider === 'ollama') {
-      if (!config.ollamaEndpoint) throw new Error('Ollama Endpoint is missing');
-      
-      const messages: any[] = [
-        { role: 'system', content: systemInstruction }
-      ];
-
-      history.forEach(m => {
-          messages.push({
-            role: m.role === 'model' ? 'assistant' : 'user',
-            content: m.parts[0].text,
-            images: m.image ? [m.image.base64] : undefined
-          });
-      });
-
-      messages.push({
-        role: 'user',
-        content: message,
-        images: currentImage ? [currentImage.base64] : undefined
-      });
-
-      const res = await fetchWithTimeout(`${config.ollamaEndpoint.replace(/\/$/, '')}/api/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: config.ollamaModel || 'llama3',
-          messages: messages,
-          stream: false,
-          options: {
-            temperature: config.temperature ?? 0.7
-          }
-        })
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data?.error || `HTTP ${res.status}`);
-      }
-
-      if (!data.message || !data.message.content) {
-        throw new Error("Unexpected response structure from Ollama API");
-      }
-
-      return data.message.content;
-    }
+  }
   } catch (err: any) {
     console.error("Chat Generation Error:", err);
     throw new Error(`${err.message}`);
@@ -323,8 +279,8 @@ async function fetchWithTimeout(resource: URL | RequestInfo, options: RequestIni
 }
 
 async function callAIVision(systemPrompt: string, base64Image: string, config: AIConfig) {
-  if (config.provider !== 'google' && config.provider !== 'xiaomi' && config.provider !== 'ollama') {
-    throw new Error('Vision is currently only supported with Google, Xiaomi or Ollama providers');
+  if (config.provider !== 'google' && config.provider !== 'xiaomi') {
+    throw new Error('Vision is currently only supported with Google or Xiaomi providers');
   }
   
   // Clean base64 header if it exists
@@ -424,37 +380,6 @@ async function callAIVision(systemPrompt: string, base64Image: string, config: A
       }
 
       return parseCleanJSON(messageContentToString(data.choices[0].message.content));
-  } else if (config.provider === 'ollama') {
-      if (!config.ollamaEndpoint) throw new Error('Ollama endpoint is missing');
-      const ollamaUrl = `${config.ollamaEndpoint?.replace(/\/$/, '')}/api/chat`;
-      let res;
-      try {
-        res = await fetchWithTimeout(ollamaUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: config.ollamaModel || 'llava',
-            format: "json",
-            messages: [{ role: "user", content: systemPrompt, images: [base64Data] }],
-            stream: false,
-            options: { temperature: config.temperature ?? 0.7 }
-          })
-        });
-      } catch (e: any) {
-        throw new Error(`Ollama API (Vision) failed: ${e.message}`);
-      }
-
-      let data;
-      try {
-        data = await res.json();
-      } catch (e) {
-        throw new Error(`Invalid JSON response from Ollama`);
-      }
-      
-      if (!res.ok) {
-        throw new Error(data?.error || `HTTP ${res.status}`);
-      }
-      return parseCleanJSON(data.message?.content);
   }
 }
 
@@ -900,39 +825,7 @@ async function callAI(systemPrompt: string, config: AIConfig) {
       
       return parseCleanJSON(messageContentToString(data.choices[0].message.content));
 
-    } else if (config.provider === 'ollama') {
-      if (!config.ollamaEndpoint) throw new Error('Ollama Endpoint is missing');
-      const res = await fetchWithTimeout(`${config.ollamaEndpoint.replace(/\/$/, '')}/api/generate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: config.ollamaModel || 'llama3',
-          prompt: systemPrompt,
-          stream: false,
-          format: 'json',
-          options: {
-            temperature: config.temperature ?? 0.7
-          }
-        })
-      });
-      
-      let data;
-      try {
-        data = await res.json();
-      } catch (e) {
-        throw new Error(`Invalid JSON response: ${res.statusText}`);
-      }
-
-      if (!res.ok) {
-        throw new Error(data?.error || `HTTP ${res.status} ${res.statusText}`);
-      }
-      
-      if (!data.response) {
-        throw new Error("Unexpected response structure from Ollama API");
-      }
-      
-      return parseCleanJSON(data.response);
-    }
+  }
   } catch (err: any) {
     console.error("AI Generation Error:", err);
     throw new Error(`AI Request failed: ${err.message}`);

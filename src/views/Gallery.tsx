@@ -4,7 +4,11 @@ import { AssetDetailModal } from "../components/AssetDetailModal";
 import { SettingsModal } from "../components/SettingsModal";
 import { GadgetMenu } from "../components/GadgetMenu";
 import { MoodboardView } from "./MoodboardView";
-import { Asset, getModelVendorString } from "../types";
+import {
+  Asset,
+  getModelLabel as getConfigModelLabel,
+  getModelVendorString,
+} from "../types";
 import {
   Search,
   Copy,
@@ -302,10 +306,7 @@ export function Gallery({ onOpenReverse }: { onOpenReverse?: () => void }) {
   };
 
   const getModelLabel = () => {
-    if (aiConfig.provider === "google")
-      return aiConfig.googleModel.replace(/-/g, "");
-    if (aiConfig.provider === "deepseek") return aiConfig.deepseekModel;
-    return aiConfig.ollamaModel || "llama3";
+    return getConfigModelLabel(aiConfig, aiConfig.provider);
   };
 
   const handleImportCsv = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -795,7 +796,7 @@ export function Gallery({ onOpenReverse }: { onOpenReverse?: () => void }) {
       styleName: asset.styleEffect || "",
       isUrlImport: true,
       isProcessingDepth: true,
-      activeView: "original",
+      activeView: "original" as const,
     };
 
     setReversePromptPairs((prev) => [newPair, ...prev]);

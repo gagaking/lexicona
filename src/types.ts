@@ -77,7 +77,12 @@ export interface ChatSession {
   messages: ChatMessage[];
 }
 
-export type AIProvider = 'google' | 'deepseek' | 'ollama' | 'xiaomi';
+export type AIProvider = 'google' | 'deepseek' | 'xiaomi';
+
+export interface AIModelOption {
+  label: string;
+  name: string;
+}
 
 export interface AIConfig {
   provider: AIProvider;
@@ -87,11 +92,9 @@ export interface AIConfig {
   deepseekModel: string;
   xiaomiApiKey: string;
   xiaomiModel: string;
-  ollamaEndpoint: string;
-  ollamaModel: string;
+  modelOptions?: Partial<Record<AIProvider, AIModelOption[]>>;
   remoteCsvUrl?: string;
   reversePromptProvider?: AIProvider;
-  reversePromptOllamaModel?: string;
   reversePromptConcurrency?: number;
   temperature?: number;
   depthModelPath?: string;
@@ -105,24 +108,63 @@ export const DEFAULT_AI_CONFIG: AIConfig = {
   deepseekModel: 'deepseek-v4-flash',
   xiaomiApiKey: '',
   xiaomiModel: 'mimo-v2.5',
-  ollamaEndpoint: 'http://127.0.0.1:11434',
-  ollamaModel: 'llama3',
+  modelOptions: {},
   remoteCsvUrl: 'https://cdn.jsdelivr.net/gh/gagaking/lexicona@main/12.csv',
   reversePromptProvider: 'xiaomi',
-  reversePromptOllamaModel: 'llava',
   reversePromptConcurrency: 3,
   temperature: 0.7,
   depthModelPath: '',
 };
 
+export const MODEL_OPTIONS: Record<AIProvider, AIModelOption[]> = {
+  google: [
+    { label: 'G3.5 Flash', name: 'gemini-3.5-flash' },
+    { label: 'G2.5 Flash', name: 'gemini-2.5-flash' },
+  ],
+  deepseek: [
+    { label: 'DS V4 Flash', name: 'deepseek-v4-flash' },
+    { label: 'DS V4 Pro', name: 'deepseek-v4-pro' },
+  ],
+  xiaomi: [
+    { label: 'MiMo V3', name: 'mimo-v3' },
+    { label: 'MiMo V2.5', name: 'mimo-v2.5' },
+  ],
+};
+
+const MODEL_FIELDS: Record<AIProvider, keyof AIConfig> = {
+  google: 'googleModel',
+  deepseek: 'deepseekModel',
+  xiaomi: 'xiaomiModel',
+};
+
+export function getSelectedModelName(config: AIConfig, provider: AIProvider): string {
+  return (config[MODEL_FIELDS[provider]] as string | undefined) ?? MODEL_OPTIONS[provider][0].name;
+}
+
+export function getModelOptions(config: AIConfig, provider: AIProvider): AIModelOption[] {
+  const saved = config.modelOptions?.[provider];
+  const options = saved ? saved : MODEL_OPTIONS[provider];
+  const selected = getSelectedModelName(config, provider);
+  if (selected && !options.some((o) => o.name === selected)) {
+    return [{ label: selected, name: selected }, ...options];
+  }
+  return options;
+}
+
+export function getModelLabel(
+  config: AIConfig,
+  provider: AIProvider,
+  modelName?: string,
+): string {
+  const name = modelName || getSelectedModelName(config, provider);
+  return getModelOptions(config, provider).find((o) => o.name === name)?.label || name;
+}
+
 export function getModelVendorString(config: AIConfig, isReversePrompt = false): string {
   const provider = isReversePrompt ? (config.reversePromptProvider || config.provider) : config.provider;
-  if (provider === 'google') return `Google / ${config.googleModel}`;
-  if (provider === 'deepseek') return `DeepSeek / ${config.deepseekModel}`;
-  if (provider === 'xiaomi') return `Xiaomi / ${config.xiaomiModel || 'mimo-v2.5'}`;
-  if (provider === 'ollama') {
-     const model = isReversePrompt ? (config.reversePromptOllamaModel || config.ollamaModel) : config.ollamaModel;
-     return `Ollama / ${model}`;
-  }
+  const label = getModelLabel(config, provider);
+  if (provider === 'google') return `Google / ${label}`;
+  if (provider === 'deepseek') return `DeepSeek / ${label}`;
+  if (provider === 'xiaomi') return `Xiaomi / ${label}`;
   return 'Unknown';
 }

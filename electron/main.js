@@ -47,7 +47,7 @@ function saveClosePreference(action) {
 function createSetupWindow(initialReport) {
   if (setupWindow && !setupWindow.isDestroyed()) return;
   setupWindow = new BrowserWindow({
-    width: 520, height: 400, resizable: false,
+    width: 520, height: 540, resizable: false,
     title: '输谱 Lexicona - 初始化',
     icon: APP_ICON,
     webPreferences: {

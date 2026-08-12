@@ -16,12 +16,17 @@ import {
 } from "lucide-react";
 import { useAppContext } from "../store";
 import { getCompressedImageDataUrl, mirrorPrompt } from "../lib/utils";
-import { getModelVendorString, ImagePromptPair } from "../types";
+import {
+  AIProvider,
+  getModelOptions,
+  getSelectedModelName,
+  getModelVendorString,
+  ImagePromptPair,
+} from "../types";
 import { saveAs } from "file-saver";
 import { v4 as uuidv4 } from "uuid";
 import {
   generatePromptFromImage,
-  unloadOllamaModel,
   isIgnorableValue,
 } from "../services/reversePromptService";
 import { undressAsset } from "../services/aiService";
@@ -384,7 +389,7 @@ const [undressingPairs, setUndressingPairs] = useState<Record<string, boolean>>(
       if (item.isUrlImport && supportsNativeUrl) {
         // Model supports URL natively, skip local fetching
       } else if (item.isUrlImport) {
-        // Fetch just in time for Google/Ollama to avoid storing 700+ base64 blobs in memory
+        // Fetch just in time for Google to avoid storing 700+ base64 blobs in memory
         const resp = await fetch(item.imageUrl, { signal: controller.signal });
         if (!resp.ok) throw new Error(`Fetch failed: ${resp.status}`);
         const blob = await resp.blob();
@@ -474,12 +479,6 @@ isEdited,
     } finally {
       delete abortControllers.current[item.id];
       setIsProcessing((prev) => ({ ...prev, [item.id]: false }));
-      if (
-        aiConfig.reversePromptProvider === "ollama" ||
-        aiConfig.provider === "ollama"
-      ) {
-        await unloadOllamaModel(aiConfig);
-      }
     }
   };
 
@@ -494,12 +493,6 @@ isEdited,
     isProcessAllCanceled.current = true;
     setIsProcessingAll(false);
     Object.values(abortControllers.current).forEach((c: any) => c.abort());
-    if (
-      aiConfig.reversePromptProvider === "ollama" ||
-      aiConfig.provider === "ollama"
-    ) {
-      await unloadOllamaModel(aiConfig);
-    }
   };
 
   const runBatchProcessing = async (toProcess: ImagePromptPair[]) => {
@@ -800,59 +793,46 @@ isEdited,
               onChange={(e) =>
                 updateAiConfig({
                   ...aiConfig,
-                  reversePromptProvider: e.target.value as any,
+                  reversePromptProvider: e.target.value as AIProvider,
                 })
               }
               className="w-20 text-sm border border-[#E0E0E0] bg-white rounded-none px-1 py-1.5 focus:outline-none focus:border-[#1E1E1E]"
             >
               <option value="google">Google</option>
               <option value="xiaomi">Xiaomi</option>
-              <option value="ollama">Ollama</option>
             </select>
 
             {(aiConfig.reversePromptProvider || aiConfig.provider) ===
               "google" && (
               <select
-                value={aiConfig.googleModel || "gemini-2.5-flash"}
+                value={getSelectedModelName(aiConfig, "google")}
                 onChange={(e) =>
                   updateAiConfig({ ...aiConfig, googleModel: e.target.value })
                 }
                 className="w-20 text-sm border border-[#E0E0E0] bg-white rounded-none px-1 py-1.5 focus:outline-none focus:border-[#1E1E1E]"
               >
-                <option value="gemini-2.5-flash">gemini-2.5</option>
-                <option value="gemini-3.5-flash">gemini-3.5</option>
+                {getModelOptions(aiConfig, "google").map((option) => (
+                  <option key={option.name} value={option.name}>
+                    {option.label}
+                  </option>
+                ))}
               </select>
             )}
             {(aiConfig.reversePromptProvider || aiConfig.provider) ===
               "xiaomi" && (
-              <input
-                type="text"
-                value={aiConfig.xiaomiModel || "mimo-v2.5"}
+              <select
+                value={getSelectedModelName(aiConfig, "xiaomi")}
                 onChange={(e) =>
                   updateAiConfig({ ...aiConfig, xiaomiModel: e.target.value })
                 }
-                placeholder="Xiaomi 模型"
                 className="w-20 text-sm border border-[#E0E0E0] bg-white rounded-none px-1 py-1.5 focus:outline-none focus:border-[#1E1E1E]"
-              />
-            )}
-            {(aiConfig.reversePromptProvider || aiConfig.provider) ===
-              "ollama" && (
-              <input
-                type="text"
-                value={
-                  aiConfig.reversePromptOllamaModel ||
-                  aiConfig.ollamaModel ||
-                  "llava"
-                }
-                onChange={(e) =>
-                  updateAiConfig({
-                    ...aiConfig,
-                    reversePromptOllamaModel: e.target.value,
-                  })
-                }
-                placeholder="Ollama 视觉模型"
-                className="w-20 text-sm border border-[#E0E0E0] bg-white rounded-none px-1 py-1.5 focus:outline-none focus:border-[#1E1E1E]"
-              />
+              >
+                {getModelOptions(aiConfig, "xiaomi").map((option) => (
+                  <option key={option.name} value={option.name}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
             )}
             <label className="text-xs text-[#7A7A7A] font-medium ml-2 hidden sm:block">
               并发

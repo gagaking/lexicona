@@ -1144,24 +1144,6 @@ export function normalizeParsedResponse(parsed: any): any {
   return normalized;
 }
 
-export async function unloadOllamaModel(config: AIConfig) {
-  if (config.reversePromptProvider === 'ollama' || config.provider === 'ollama') {
-    const ollamaUrl = `${config.ollamaEndpoint?.replace(/\/$/, '')}/api/chat`;
-    try {
-      await fetch(ollamaUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: config.reversePromptOllamaModel || config.ollamaModel || 'llava',
-          keep_alive: 0
-        })
-      });
-    } catch (e) {
-      console.error("Failed to unload ollama model", e);
-    }
-  }
-}
-
 export async function generatePromptFromImage(base64Data: string, mimeType: string, imageUrl: string | undefined, config: AIConfig, abortSignal?: AbortSignal, editInstruction?: string) {
   const provider = config.reversePromptProvider || config.provider;
   const userText = editInstruction
@@ -1202,32 +1184,6 @@ export async function generatePromptFromImage(base64Data: string, mimeType: stri
 
       const response = await res.json();
       resultText = response.candidates?.[0]?.content?.parts?.[0]?.text || "";
-    } else if (provider === 'ollama') {
-      const ollamaUrl = `${config.ollamaEndpoint?.replace(/\/$/, '')}/api/chat`;
-      const res = await fetchWithTimeout(ollamaUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        signal: abortSignal,
-        body: JSON.stringify({
-          model: config.reversePromptOllamaModel || config.ollamaModel || 'llava',
-          format: "json",
-          messages: [{ role: "user", content: userText, images: [base64Data] }],
-          stream: false,
-          options: { temperature: 0.1 }
-        })
-      });
-      if (!res.ok) {
-        let errMsg = "";
-        try {
-          const errObj = await res.json();
-          errMsg = errObj.error?.message || errObj.error || JSON.stringify(errObj);
-        } catch (e) {
-          errMsg = await res.text().catch(() => "");
-        }
-        throw new Error(`Ollama Req Failed: ${res.status} ${res.statusText} \nDetails: ${errMsg}`);
-      }
-      const json = await res.json();
-      resultText = json.message?.content || "";
     } else if (provider === 'xiaomi') {
       const apiKey = config.xiaomiApiKey?.trim();
       if (!apiKey) throw new Error('Xiaomi API Key is missing');
@@ -1398,7 +1354,7 @@ export async function editPromptWithSubject(masterPrompt: string, targetProduct:
       const response = await res.json();
       return response.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "错误：AI未返回编辑后的提示词";
     } else {
-      // Basic fallback to local replacement if ollama doesn't support easy edit
+      // Basic fallback to local replacement for non-Google providers
       return masterPrompt.replace(/主体/g, targetProduct);
     }
   } catch (err: any) {
