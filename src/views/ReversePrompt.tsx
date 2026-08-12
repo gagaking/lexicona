@@ -26,6 +26,7 @@ import {
 import { saveAs } from "file-saver";
 import { v4 as uuidv4 } from "uuid";
 import {
+  DEFAULT_NEGATIVE_PROMPT,
   generatePromptFromImage,
   isIgnorableValue,
 } from "../services/reversePromptService";
@@ -588,7 +589,12 @@ isEdited,
           ? {
               ...p,
               structuredPrompt: mergedStructured,
-              prompt: getCombinedPrompt({ ...p, structuredPrompt: mergedStructured }),
+              negativePrompt: DEFAULT_NEGATIVE_PROMPT,
+              prompt: getCombinedPrompt({
+                ...p,
+                structuredPrompt: mergedStructured,
+                negativePrompt: DEFAULT_NEGATIVE_PROMPT,
+              }),
               isEdited: true,
             }
           : p
@@ -597,9 +603,18 @@ isEdited,
     finally { setUndressingPairs((prev) => ({ ...prev, [pair.id]: false })); }
   };
 
+  const appendNegativePrompt = (prompt: string, negativePrompt?: string) => {
+    const base = prompt?.trim() || "";
+    const neg = negativePrompt?.trim() || "";
+    if (!neg) return base;
+    const negBody = neg.replace(/^--neg\s*/i, "").trim();
+    const cleanedBase = base.replace(/\s*--neg\b.*$/i, "").trim();
+    return cleanedBase ? `${cleanedBase} --neg ${negBody}` : `--neg ${negBody}`;
+  };
+
   const getCombinedPrompt = (p: ImagePromptPair) => {
-    if (p.isEdited) return p.prompt; // 如果已经进行了换装等二次编辑，则直接返回最新的正向提示词
-    if (!p.structuredPrompt) return p.prompt; // fallback
+    if (p.isEdited) return appendNegativePrompt(p.prompt || "", p.negativePrompt);
+    if (!p.structuredPrompt) return appendNegativePrompt(p.prompt || "", p.negativePrompt);
     const combined = Object.entries(categoryLabels)
       .map(([key, label]) => {
         const text = formatStruct(p.structuredPrompt[key]);
@@ -609,10 +624,7 @@ isEdited,
      .filter((x) => x)
      .join("; ");
     let result = combined || p.prompt;
-    if (p.negativePrompt) {
-      result += " --neg " + p.negativePrompt;
-    }
-    return result;
+    return appendNegativePrompt(result, p.negativePrompt);
   };
 
   const copyText = (text: string, id: string) => {

@@ -6,6 +6,10 @@ directories:
   output: release-full
   buildResources: build_resources
 
+electronLanguages:
+  - en-US
+  - zh-CN
+
 files:
   - electron/**/*
   - dist/**/*
@@ -35,12 +39,25 @@ extraResources:
     filter:
       - "**/*"
       - "!**/.git/**"
+      - "!**/assets/**"
+      - "!**/metric_depth/**"
+      - "!**/app.py"
+      - "!**/run.py"
+      - "!**/run_video.py"
+      - "!**/DA-2K.md"
+      - "!**/README.md"
+      - "!**/requirements.txt"
   - from: run_depth_anything.py
     to: run_depth_anything.py
   - from: build_resources/icon.ico
     to: icon.ico
   - from: build/depth-engine
     to: depth-engine
+    filter:
+      - "**/*"
+      - "!**/_internal/torch/include/**"
+      - "!**/_internal/torch/lib/*.lib"
+      - "!**/_internal/torch/share/**"
   - from: models
     to: models
     filter:

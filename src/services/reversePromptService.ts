@@ -620,7 +620,7 @@ imageTags:
 
 6. 当一种视觉现象既可以描述为检测结果，又可以描述为摄影语言时，必须优先采用摄影语言，因为最终目标是用于AI图像生成，而不是图像识别。
 `;
-const NEGATIVE_PROMPT = "低清晰度, 画质损坏, 严重压缩痕迹, 主体失焦, 五官错误, 人体畸形, 肢体异常, 多余肢体, 错误结构, 背景无意义杂乱元素, collage, grid, split screen, multiple views, multiple angles, triptych, photobooth grid, repeating patterns, collection sheet, duplicated objects, duplicated products, multiple shoes;";
+export const DEFAULT_NEGATIVE_PROMPT = "--neg 低缺陷、画质损坏、严重压缩痕迹、主体失焦、五官错误、人体结构、肢体异常、肢体异常、错误结构、背景无意义杂乱元素、分屏、多视图、多角度、照相亭网格、重复图案、收藏表、重复物体、重复产品；";
 
 async function fetchWithTimeout(resource: URL | RequestInfo, options: RequestInit & { timeout?: number } = {}) {
   const { timeout = 120000 } = options;
@@ -1306,7 +1306,7 @@ export async function generatePromptFromImage(base64Data: string, mimeType: stri
       return {
         prompt: stringPrompt,
         structuredPrompt,
-        negativePrompt: NEGATIVE_PROMPT,
+        negativePrompt: DEFAULT_NEGATIVE_PROMPT,
         styleName: styleName || "未命名风格",
         imageTags: imageTags || ""
       };
