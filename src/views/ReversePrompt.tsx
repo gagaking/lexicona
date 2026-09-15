@@ -1,4 +1,4 @@
-﻿import React, { useState, useCallback, useRef, useEffect } from "react";
+import React, { useState, useCallback, useRef, useEffect } from "react";
 import {
   ArrowLeft, Shirt, Loader2,
   Image as ImageIcon,
@@ -15,7 +15,11 @@ import {
   X,
 } from "lucide-react";
 import { useAppContext } from "../store";
-import { getCompressedImageDataUrl, mirrorPrompt } from "../lib/utils";
+import {
+  getCompressedImageDataUrl,
+  mirrorPrompt,
+  resizeImageDataUrlIfNeeded,
+} from "../lib/utils";
 import {
   AIProvider,
   getModelOptions,
@@ -97,7 +101,7 @@ export function ReversePrompt({ onClose }: { onClose: () => void }) {
   const [isClearing, setIsClearing] = useState(false);
 
 // 深度图引用版前缀
-const DEPTH_REF_PREFIX = "以深度图作为主要空间结构参考，保持原始空间关系、物体位置、比例关系、透视关系、镜头视角和整体构图，不要改变主体的几何结构和空间布局，仅调整主体外观、材质、风格、光影、色彩和环境细节。";
+const DEPTH_REF_PREFIX = "以深度图为主要空间结构参考，严格保持其人物姿势、人物位置、背景内容、物体位置、空间关系、比例、透视、镜头视角和整体构图，不得改变或重新设计。仅调整主体外观、服饰、材质、光影、色彩及风格。";
 
   const [promptCopyVersion, setPromptCopyVersion] = useState<Record<string, "normal" | "depth">>({});
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
@@ -422,6 +426,21 @@ const [undressingPairs, setUndressingPairs] = useState<Record<string, boolean>>(
         }
       }
 
+      if (base64Part) {
+        const resizedDataUrl = await resizeImageDataUrlIfNeeded(
+          `data:${mimeType};base64,${base64Part}`,
+          1200,
+          undefined,
+          controller.signal,
+        );
+        if (resizedDataUrl !== `data:${mimeType};base64,${base64Part}`) {
+          const commaIndex = resizedDataUrl.indexOf(",");
+          base64Part = resizedDataUrl.slice(commaIndex + 1);
+          mimeType =
+            resizedDataUrl.match(/^data:([^;]+);/)?.[1] || "image/jpeg";
+        }
+      }
+
       const {
         prompt,
         structuredPrompt,
@@ -584,17 +603,20 @@ isEdited,
       mergedStructured.outfitAndStyle = updated.outfitAndStyle || updated.outfitStyle || mergedStructured.outfitAndStyle;
       mergedStructured.subjectAndPose = updated.subjectAndPose || updated.subjectPose || mergedStructured.subjectAndPose;
       mergedStructured.actionAndDetails = updated.actionAndDetails || updated.actionDetails || mergedStructured.actionAndDetails;
+      // 正文只保留结构化内容，约束提示词由 negativePrompt 单独承载，避免复制/导出时重复追加
+      const nextPrompt = getCombinedPrompt({
+        ...pair,
+        structuredPrompt: mergedStructured,
+        negativePrompt: undefined,
+        isEdited: false,
+      });
       setPairs((prev) => prev.map((p) =>
         p.id === pair.id
           ? {
               ...p,
               structuredPrompt: mergedStructured,
               negativePrompt: DEFAULT_NEGATIVE_PROMPT,
-              prompt: getCombinedPrompt({
-                ...p,
-                structuredPrompt: mergedStructured,
-                negativePrompt: DEFAULT_NEGATIVE_PROMPT,
-              }),
+              prompt: nextPrompt,
               isEdited: true,
             }
           : p
@@ -609,7 +631,10 @@ isEdited,
     if (!neg) return base;
     const negBody = neg.replace(/^--neg\s*/i, "").trim();
     const cleanedBase = base.replace(/\s*--neg\b.*$/i, "").trim();
-    return cleanedBase ? `${cleanedBase} --neg ${negBody}` : `--neg ${negBody}`;
+    if (!negBody) return cleanedBase;
+    // 已包含同一段约束提示词（如卸装写入的历史数据）时不重复追加
+    if (cleanedBase === negBody || cleanedBase.endsWith(negBody)) return cleanedBase;
+    return [cleanedBase, negBody].filter(Boolean).join(" ");
   };
 
   const getCombinedPrompt = (p: ImagePromptPair) => {
@@ -811,6 +836,7 @@ isEdited,
               className="w-20 text-sm border border-[#E0E0E0] bg-white rounded-none px-1 py-1.5 focus:outline-none focus:border-[#1E1E1E]"
             >
               <option value="google">Google</option>
+              <option value="deepseek">DeepSeek</option>
               <option value="xiaomi">Xiaomi</option>
             </select>
 
@@ -824,6 +850,22 @@ isEdited,
                 className="w-20 text-sm border border-[#E0E0E0] bg-white rounded-none px-1 py-1.5 focus:outline-none focus:border-[#1E1E1E]"
               >
                 {getModelOptions(aiConfig, "google").map((option) => (
+                  <option key={option.name} value={option.name}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            )}
+            {(aiConfig.reversePromptProvider || aiConfig.provider) ===
+              "deepseek" && (
+              <select
+                value={getSelectedModelName(aiConfig, "deepseek")}
+                onChange={(e) =>
+                  updateAiConfig({ ...aiConfig, deepseekModel: e.target.value })
+                }
+                className="w-20 text-sm border border-[#E0E0E0] bg-white rounded-none px-1 py-1.5 focus:outline-none focus:border-[#1E1E1E]"
+              >
+                {getModelOptions(aiConfig, "deepseek").map((option) => (
                   <option key={option.name} value={option.name}>
                     {option.label}
                   </option>
@@ -1251,7 +1293,7 @@ isEdited,
                         {p.negativePrompt && (
                           <div className="pt-2 border-t border-[#E0E0E0]">
                             <span className="text-[11px] font-semibold text-[#1E1E1E] mb-1 block">
-                              负面提示词
+                              约束提示词
                             </span>
                             <p className="text-[11px] text-[#7A7A7A] leading-relaxed break-all whitespace-pre-wrap font-sans">
                               {p.negativePrompt}

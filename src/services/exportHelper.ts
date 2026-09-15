@@ -1,6 +1,6 @@
 export function getOfflineHtml(pairs: any[]) {
   const imagesHtml = pairs.filter(p => p.prompt && !p.prompt.startsWith('错误')).map(p => {
-    let negPromptHtml = p.negativePrompt ? `<div class="negative-prompt-container"><h4>负面提示词</h4><p class="negative-prompt-text">${p.negativePrompt}</p></div>` : '';
+    let negPromptHtml = p.negativePrompt ? `<div class="negative-prompt-container"><h4>约束提示词</h4><p class="negative-prompt-text">${p.negativePrompt}</p></div>` : '';
     let structHtml = '';
     if (p.structuredPrompt) {
        structHtml = `<details class="structured-prompt-details"><summary>展开结构化视图</summary><div class="structured-content"><pre style="font-size:12px;color:#a3a3a3;">${JSON.stringify(p.structuredPrompt, null, 2)}</pre></div></details>`;

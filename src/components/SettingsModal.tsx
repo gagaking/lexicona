@@ -458,6 +458,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                   className="w-full bg-white border border-[#E0E0E0] text-[#1E1E1E] text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 p-2.5 outline-none cursor-pointer rounded-none font-sans transition-colors"
                 >
                   <option value="google">Google Gemini</option>
+                  <option value="deepseek">DeepSeek</option>
                   <option value="xiaomi">Xiaomi MiMo</option>
                 </select>
               </div>
@@ -466,7 +467,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
             <div className="grid grid-cols-1 gap-4">
               {/* Google Config */}
               <div
-                className={`space-y-4 p-4 border transition-colors ${formData.provider === "google" || formData.reversePromptProvider === "google" ? "border-blue-500 bg-blue-50/30 opacity-100 shadow-sm" : "border-[#E0E0E0] opacity-40 bg-white"}`}
+                className={`space-y-4 p-4 border transition-colors ${"border-[#E0E0E0] bg-white"}`}
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
@@ -534,7 +535,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
 
               {/* DeepSeek Config */}
               <div
-                className={`space-y-4 p-4 border transition-colors ${formData.provider === "deepseek" ? "border-blue-500 bg-blue-50/30 opacity-100 shadow-sm" : "border-[#E0E0E0] opacity-40 bg-white"}`}
+                className={`space-y-4 p-4 border transition-colors ${"border-[#E0E0E0] bg-white"}`}
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
@@ -605,7 +606,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
 
               {/* Xiaomi MiMo Config */}
               <div
-                className={`space-y-4 p-4 border transition-colors ${formData.provider === "xiaomi" || formData.reversePromptProvider === "xiaomi" ? "border-blue-500 bg-blue-50/30 opacity-100 shadow-sm" : "border-[#E0E0E0] opacity-40 bg-white"}`}
+                className={`space-y-4 p-4 border transition-colors ${"border-[#E0E0E0] bg-white"}`}
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">

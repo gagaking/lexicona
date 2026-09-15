@@ -18,7 +18,7 @@ export async function getCompressedImageDataUrl(
     return input;
   }
 
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const objectUrl = URL.createObjectURL(blob);
     const img = new Image();
     const fallbackToOriginal = () => {
@@ -51,6 +51,72 @@ export async function getCompressedImageDataUrl(
     };
     img.onerror = fallbackToOriginal;
     img.src = objectUrl;
+  });
+}
+
+export async function resizeImageDataUrlIfNeeded(
+  dataUrl: string,
+  maxSize = 1200,
+  quality = 0.9,
+  signal?: AbortSignal,
+): Promise<string> {
+  if (signal?.aborted) {
+    const abortError = new Error("Aborted");
+    abortError.name = "AbortError";
+    throw abortError;
+  }
+
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      cleanup();
+      const abortError = new Error("Aborted");
+      abortError.name = "AbortError";
+      reject(abortError);
+    };
+    const cleanup = () => {
+      signal?.removeEventListener("abort", onAbort);
+    };
+
+    const img = new Image();
+    img.onload = () => {
+      try {
+        if (signal?.aborted) {
+          cleanup();
+          const abortError = new Error("Aborted");
+          abortError.name = "AbortError";
+          reject(abortError);
+          return;
+        }
+        const sourceWidth = img.naturalWidth || 1;
+        const sourceHeight = img.naturalHeight || 1;
+        if (Math.max(sourceWidth, sourceHeight) <= maxSize) {
+          cleanup();
+          resolve(dataUrl);
+          return;
+        }
+
+        const scale = maxSize / Math.max(sourceWidth, sourceHeight);
+        const width = Math.max(1, Math.round(sourceWidth * scale));
+        const height = Math.max(1, Math.round(sourceHeight * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) throw new Error("Cannot get 2D context");
+        ctx.drawImage(img, 0, 0, width, height);
+        cleanup();
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      } catch {
+        cleanup();
+        resolve(dataUrl);
+      }
+    };
+    img.onerror = () => {
+      cleanup();
+      resolve(dataUrl);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    img.src = dataUrl;
   });
 }
 
@@ -102,10 +168,6 @@ export function mirrorPrompt(text: string): string {
   const regex = /left|right|Left|Right|LEFT|RIGHT|左|右/g;
   return text.replace(regex, (match) => map[match] || match);
 }
-
-
-
-
 
 
 

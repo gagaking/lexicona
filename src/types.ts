@@ -1,4 +1,4 @@
-﻿export interface ImagePromptPair {
+export interface ImagePromptPair {
   id: string; 
   imageUrl: string; 
   imageName: string;
@@ -122,6 +122,7 @@ export const MODEL_OPTIONS: Record<AIProvider, AIModelOption[]> = {
   deepseek: [
     { label: 'DS V4 Flash', name: 'deepseek-v4-flash' },
     { label: 'DS V4 Pro', name: 'deepseek-v4-pro' },
+    { label: 'DS VL Vision Exp', name: 'deepseek-v4-flash-vision-exp' },
   ],
   xiaomi: [
     { label: 'MiMo V3', name: 'mimo-v3' },

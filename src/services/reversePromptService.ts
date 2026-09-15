@@ -364,21 +364,18 @@ JSON Schema & 详细说明:
 "高速奔跑过程中被摄影师捕捉的一瞬间，身体存在惯性变化，四肢形成自然运动轨迹，衣物与头发随运动方向产生动态变化"
 
 
-8. 穿搭与风格 outfitAndStyle:
+8. 穿搭与风格 outfitAndStyle：
 
-描述:
+多人画面必须**按人物分别描述**，先确定人物在画面中的位置，再对应描述其服装，禁止混合或错配。
 
-- 上装
-- 下装
-- 鞋子
-- 材质
-- 色彩关系
-- 风格定位
+* 左侧人物：上装、下装、鞋子、材质、色彩关系
+* 中间人物：上装、下装、鞋子、材质、色彩关系
+* 右侧人物：上装、下装、鞋子、材质、色彩关系
 
+人物位置以画面实际空间关系为准，可使用“左侧 / 中间 / 右侧 / 前景 / 后景”等定位。
 
-同一服装只描述一次。
+同一服装只描述一次，删除重复颜色描述。
 
-删除重复颜色描述。
 
 
 9. 特殊效果 specialEffects:
@@ -556,7 +553,7 @@ imageTags:
 - 重复描述。
 
 
-负向提示词分析规则:
+约束提示词分析规则:
 
 不要默认输出：
 
@@ -620,7 +617,7 @@ imageTags:
 
 6. 当一种视觉现象既可以描述为检测结果，又可以描述为摄影语言时，必须优先采用摄影语言，因为最终目标是用于AI图像生成，而不是图像识别。
 `;
-export const DEFAULT_NEGATIVE_PROMPT = "--neg 低缺陷、画质损坏、严重压缩痕迹、主体失焦、五官错误、人体结构、肢体异常、肢体异常、错误结构、背景无意义杂乱元素、分屏、多视图、多角度、照相亭网格、重复图案、收藏表、重复物体、重复产品；";
+export const DEFAULT_NEGATIVE_PROMPT = "High-quality photographic rendering, clear focus, natural anatomy and proportions, clean composition. Preserve the specified subject count, perspective, spatial relationships, and viewing direction. Avoid text, split screens, multi-view layouts, grid patterns, duplicates, repeated elements, and unnecessary background clutter.";
 
 async function fetchWithTimeout(resource: URL | RequestInfo, options: RequestInit & { timeout?: number } = {}) {
   const { timeout = 120000 } = options;
@@ -799,6 +796,58 @@ const buildStringPrompt = (structuredPrompt: any) => {
   }).filter(x => x !== "").join("; ");
 };
 
+const PARSE_SCORE_KEYS = [...Object.keys(CATEGORIES), 'styleName', 'imageTags'];
+
+function scoreParsedObject(obj: any): number {
+  let score = 0;
+  for (const key of PARSE_SCORE_KEYS) {
+    const value = obj?.[key];
+    if (value !== undefined && value !== null && String(value).trim() !== '') score++;
+  }
+  return score;
+}
+
+function extractBestJsonObject(text: string): any {
+  const candidates: { text: string; score: number }[] = [];
+
+  for (let start = 0; start < text.length; start++) {
+    if (text[start] !== '{') continue;
+
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = start; i < text.length; i++) {
+      const ch = text[i];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (ch === '\\') escaped = true;
+        else if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') { inString = true; continue; }
+      if (ch === '{') depth++;
+      else if (ch === '}') {
+        depth--;
+        if (depth === 0) {
+          const candidate = text.substring(start, i + 1);
+          try {
+            const repaired = JSON.parse(jsonrepair(candidate));
+            if (repaired && typeof repaired === 'object' && !Array.isArray(repaired)) {
+              const score = scoreParsedObject(repaired);
+              if (score > 0) candidates.push({ text: candidate, score });
+            }
+          } catch { }
+          break;
+        }
+      }
+    }
+  }
+
+  candidates.sort((a, b) => b.score - a.score);
+  if (candidates.length === 0) return null;
+  return JSON.parse(jsonrepair(candidates[0].text));
+}
+
 function parseCleanJSON(text: string) {
   let cleanText = text.trim();
   
@@ -873,6 +922,8 @@ function parseCleanJSON(text: string) {
         try {
           return JSON.parse(jsonrepair(cleanText));
         } catch (repairErr) {
+          const extracted = extractBestJsonObject(cleanText);
+          if (extracted !== null) return extracted;
           throw err;
         }
       }
@@ -944,6 +995,14 @@ function buildFallbackPrompt(rawParsed: any): string {
 
   walk(rawParsed, "", 0);
   return collected.slice(0, 40).join("；");
+}
+
+function buildApiErrorMessage(provider: string, rawMessage: string, status?: number): string {
+  const message = rawMessage?.trim() || `HTTP ${status}`;
+  if (/authentication fails|invalid api key|unauthorized|401|api key is (invalid|missing)|access.?denied/i.test(message)) {
+    return `${provider} API Key 无效或已过期，请检查设置中的 API Key。原始错误：${message}`;
+  }
+  return message;
 }
 
 function messageContentToString(content: any): string {
@@ -1179,7 +1238,7 @@ export async function generatePromptFromImage(base64Data: string, mimeType: stri
 
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.error?.message || `HTTP ${res.status}`);
+        throw new Error(buildApiErrorMessage("Google", errorData.error?.message || "", res.status));
       }
 
       const response = await res.json();
@@ -1240,7 +1299,68 @@ export async function generatePromptFromImage(base64Data: string, mimeType: stri
       if (!res?.ok) {
         let errorData: any = {};
         try { errorData = await res?.json(); } catch(e){}
-        throw new Error(errorData?.error?.message || `HTTP ${res?.status}`);
+        throw new Error(buildApiErrorMessage("Xiaomi", errorData?.error?.message || "", res?.status));
+      }
+
+      const response = await res.json();
+      resultText = messageContentToString(response.choices?.[0]?.message?.content);
+    } else if (provider === 'deepseek') {
+      const apiKey = config.deepseekApiKey?.trim();
+      if (!apiKey) throw new Error('DeepSeek API Key is missing');
+
+      const endpoint = 'https://api.deepseek.com/chat/completions';
+      const model = config.deepseekModel || 'deepseek-v4-flash-vision-exp';
+      const maxRetries = 3;
+      let res;
+      let httpAttempt = 0;
+
+      const payloadImageUrl = (imageUrl && imageUrl.startsWith('http')) ? imageUrl : `data:${mimeType};base64,${base64Data}`;
+      const retryPrompt = attempt > 0
+        ? `${userText}\n\n重要：这是第${attempt + 1}次请求。前一次输出为空或不符合结构。请务必重新完整分析图片，输出包含全部9个分类、styleName、imageTags的JSON；所有字段必须填写画面真实内容，禁止返回空对象、空字符串或省略字段。`
+        : userText;
+      const temperature = [0.1, 0.3, 0.25, 0.4, 0.35][attempt] ?? 0.3;
+      const useJsonResponseFormat = attempt < 3;
+
+      while (httpAttempt < maxRetries) {
+        try {
+          res = await fetchWithTimeout(endpoint, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${apiKey}`
+            },
+            signal: abortSignal,
+            body: JSON.stringify({
+              model: model,
+              messages: [
+                {
+                  role: 'user',
+                  content: [
+                    { type: 'text', text: retryPrompt },
+                    { type: 'image_url', image_url: { url: payloadImageUrl } }
+                  ]
+                }
+              ],
+              response_format: useJsonResponseFormat ? { type: 'json_object' } : undefined,
+              temperature
+            })
+          });
+
+          if (res.ok) break;
+          httpAttempt++;
+          if (httpAttempt >= maxRetries) break;
+          await new Promise(r => setTimeout(r, 1000));
+        } catch (e) {
+          httpAttempt++;
+          if (httpAttempt >= maxRetries) throw e;
+          await new Promise(r => setTimeout(r, 1000));
+        }
+      }
+
+      if (!res?.ok) {
+        let errorData: any = {};
+        try { errorData = await res?.json(); } catch(e){}
+        throw new Error(buildApiErrorMessage("DeepSeek", errorData?.error?.message || "", res?.status));
       }
 
       const response = await res.json();
@@ -1348,7 +1468,7 @@ export async function editPromptWithSubject(masterPrompt: string, targetProduct:
 
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.error?.message || `HTTP ${res.status}`);
+        throw new Error(buildApiErrorMessage("Google", errorData.error?.message || "", res.status));
       }
 
       const response = await res.json();
