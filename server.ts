@@ -1,3 +1,4 @@
+import { createServer } from "http";
 import express from "express";
 import path from "path";
 import { existsSync } from "fs";
@@ -60,6 +61,35 @@ function resolveModelPath(modelPath: string | undefined): string | null {
     return defaultModel;
   }
   return null;
+}
+
+// Windows 的 TCP 保留端口段（Hyper-V/WSL）会随重启变化，落在其中的端口 listen 会报 EACCES；
+// 端口被别的进程占用时报 EADDRINUSE。两种情况都顺延到下一个可用端口。
+async function listenOnAvailablePort(app: express.Express, basePort: number, maxAttempts = 200) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const port = basePort + attempt;
+    const server = createServer(app);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onError = (err: Error) => reject(err);
+        server.once("error", onError);
+        server.listen(port, "0.0.0.0", () => {
+          server.removeListener("error", onError);
+          resolve();
+        });
+      });
+      return { server, port };
+    } catch (err) {
+      server.close();
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "EACCES" || code === "EADDRINUSE") {
+        console.warn(`Port ${port} unavailable (${code}), trying ${port + 1}...`);
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error(`No available port in range ${basePort}-${basePort + maxAttempts - 1}`);
 }
 
 async function startServer() {
@@ -297,9 +327,11 @@ async function startServer() {
     res.status(tooLarge ? 413 : 400).json({ error: message });
   });
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://0.0.0.0:${PORT}`);
-  });
+  const { port: actualPort } = await listenOnAvailablePort(app, PORT);
+  process.env.LEXICONA_ACTIVE_PORT = String(actualPort);
+  // @types/node 把 process.emit 收窄成信号重载，这里按事件签名发送自定义事件
+  (process.emit as (event: string, ...args: unknown[]) => boolean)("lexicona:port", actualPort);
+  console.log(`Server running on http://0.0.0.0:${actualPort}`);
 }
 
 startServer();

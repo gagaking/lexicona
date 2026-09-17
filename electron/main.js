@@ -129,9 +129,23 @@ function startServer() {
     try {
       delete require.cache[require.resolve(serverPath)];
     } catch (e) {}
-    require(serverPath);
-    console.log('[Server] Started on port ' + port);debug('Server started on port ' + port);
-    resolve(port);
+    // server.cjs 会在首选端口不可用时顺延，这里等它把真实端口报回来
+    let settled = false;
+    const finish = (actualPort) => {
+      if (settled) return;
+      settled = true;
+      console.log('[Server] Started on port ' + actualPort);
+      debug('Server started on port ' + actualPort);
+      resolve(actualPort);
+    };
+    process.once('lexicona:port', (reportedPort) => finish(Number(reportedPort) || port));
+    setTimeout(() => finish(Number(process.env.LEXICONA_ACTIVE_PORT) || port), 20000);
+    try {
+      require(serverPath);
+    } catch (err) {
+      debug('Server require failed: ' + (err && err.message));
+      finish(port);
+    }
   });
 }
 
@@ -210,8 +224,8 @@ ipcMain.handle('run-setup', async () => {
   } catch (e) { return { success: false, error: e.message }; }
 });
 ipcMain.handle('start-app', async () => {
-  const port = getPort();
-  if (app.isPackaged) await startServer();
+  // 打包版以 server 实际绑定的端口为准（首选端口被系统占用时会顺延）
+  const port = app.isPackaged ? await startServer() : getPort();
   createMainWindow(port);
   if (setupWindow && !setupWindow.isDestroyed()) {
     setupWindow.close();
@@ -248,8 +262,7 @@ app.whenReady().then(async () => {
       return;
     }
   }
-  const port = getPort();
-  if (app.isPackaged) await startServer();
+  const port = app.isPackaged ? await startServer() : getPort();
   createMainWindow(port);
 });
 
