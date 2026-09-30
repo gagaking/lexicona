@@ -3,12 +3,12 @@ import sys
 import os
 import argparse
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description="Depth Anything V2 Inference Script")
     parser.add_argument("--image", required=True, help="Path to input image")
     parser.add_argument("--model", required=True, help="Path to Depth Anything V2 model weights (.pth)")
     parser.add_argument("--output", required=True, help="Path to save output depth map")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     print(f"Loading model from {args.model}...", flush=True)
     print(f"Processing image {args.image}...", flush=True)

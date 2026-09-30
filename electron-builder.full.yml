@@ -49,6 +49,8 @@ extraResources:
       - "!**/requirements.txt"
   - from: run_depth_anything.py
     to: run_depth_anything.py
+  - from: birefnet_matting.py
+    to: birefnet_matting.py
   - from: build_resources/icon.ico
     to: icon.ico
   - from: build/depth-engine
@@ -62,6 +64,10 @@ extraResources:
     to: models
     filter:
       - "depth_anything_v2_vitl.pth"
+      - "birefnet/**/model.safetensors"
+      - "birefnet/**/config.json"
+      - "birefnet/**/birefnet.py"
+      - "birefnet/**/BiRefNet_config.py"
 
 publish: null
 

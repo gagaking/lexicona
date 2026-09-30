@@ -18,10 +18,10 @@ if ($LASTEXITCODE -ne 0) {
 $dist = Join-Path $root 'build'
 $work = Join-Path $root 'build\pyinstaller-work'
 $spec = Join-Path $root 'build\pyinstaller-spec'
-$source = Join-Path $root 'run_depth_anything.py'
+$source = Join-Path $root 'engine.py'
 $depthRoot = Join-Path $root 'depth-anything-v2'
 
-& $python -m PyInstaller --noconfirm --clean --onedir --name depth-engine --distpath $dist --workpath $work --specpath $spec --paths $depthRoot --collect-all torch --collect-all cv2 --collect-all numpy --log-level WARN $source
+& $python -m PyInstaller --noconfirm --clean --onedir --name depth-engine --distpath $dist --workpath $work --specpath $spec --paths $depthRoot --paths $root --collect-all torch --collect-all cv2 --collect-all numpy --collect-all torchvision --collect-all timm --collect-all kornia --collect-all einops --collect-all transformers --collect-all PIL --hidden-import safetensors --hidden-import birefnet_matting --hidden-import run_depth_anything --log-level WARN $source
 if ($LASTEXITCODE -ne 0) {
   throw 'PyInstaller depth engine build failed.'
 }

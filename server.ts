@@ -63,6 +63,50 @@ function resolveModelPath(modelPath: string | undefined): string | null {
   return null;
 }
 
+const MATTING_FOLDERS: Record<string, string[]> = {
+  // 精细模式：人像/服装等带发丝与半透明边缘的主体
+  matting: ["BiRefNet_HR-matting", "BiRefNet-matting", "BiRefNet-portrait", "BiRefNet"],
+  // 通用模式：物体、场景等边界清晰的主体
+  general: ["BiRefNet", "BiRefNet_HR"],
+};
+
+function mattingRoots(): string[] {
+  const roots = [path.join(ROOT, "models", "birefnet")];
+  try {
+    const rp = (process as any).resourcesPath;
+    if (rp) roots.push(path.join(rp, "models", "birefnet"));
+  } catch (_) {}
+  try {
+    const exeDir = path.dirname(process.execPath);
+    roots.push(path.join(exeDir, "models", "birefnet"));
+  } catch (_) {}
+  return roots;
+}
+
+function resolveMattingModelDir(kind: string | undefined): string | null {
+  const folders = MATTING_FOLDERS[kind === "general" ? "general" : "matting"];
+  for (const root of mattingRoots()) {
+    for (const folder of folders) {
+      const dir = path.join(root, folder);
+      if (existsSync(path.join(dir, "model.safetensors"))) return dir;
+    }
+  }
+  return null;
+}
+
+function findMattingScript(): string | null {
+  const candidates = [path.join(ROOT, "birefnet_matting.py")];
+  try {
+    const rp = (process as any).resourcesPath;
+    if (rp) candidates.push(path.join(rp, "birefnet_matting.py"));
+  } catch (_) {}
+  try {
+    const exeDir = path.dirname(process.execPath);
+    candidates.push(path.join(exeDir, "birefnet_matting.py"));
+  } catch (_) {}
+  return candidates.find((candidate) => existsSync(candidate)) || null;
+}
+
 // Windows 的 TCP 保留端口段（Hyper-V/WSL）会随重启变化，落在其中的端口 listen 会报 EACCES；
 // 端口被别的进程占用时报 EADDRINUSE。两种情况都顺延到下一个可用端口。
 async function listenOnAvailablePort(app: express.Express, basePort: number, maxAttempts = 200) {
@@ -113,6 +157,8 @@ async function startServer() {
     const engine = findDepthEngine();
     const defaultModel = path.join(ROOT, "models", "depth_anything_v2_vitl.pth");
     const pythonPath = path.join(ROOT, "gpu_env", "Scripts", "python.exe");
+    const mattingModel = resolveMattingModelDir("matting");
+    const mattingScript = findMattingScript();
     const issues: string[] = [];
     if (!engine && !existsSync(pythonPath)) {
       issues.push("未找到内置深度引擎或 Python 环境");
@@ -128,6 +174,8 @@ async function startServer() {
       pythonFound: existsSync(pythonPath),
       modelFound: existsSync(defaultModel),
       modelPath: defaultModel,
+      mattingModelDir: mattingModel,
+      mattingAvailable: Boolean(mattingModel) && Boolean(engine || (existsSync(pythonPath) && mattingScript)),
       issues,
     });
   });
@@ -244,6 +292,124 @@ async function startServer() {
     } catch (error: any) {
       console.error("Depth map generation failed:", error);
       res.status(500).json({ error: error.message || "Internal error during depth map generation" });
+    }
+  });
+
+  // API route for local BiRefNet matting (抠图)
+  app.post("/api/matting", async (req, res) => {
+    const { writeFileSync, unlinkSync, existsSync, readFileSync } = await import("fs");
+    const { execFile } = await import("child_process");
+
+    try {
+      const { image, model, size } = req.body || {};
+      if (!image) {
+        return res.status(400).json({ error: "Missing image data" });
+      }
+
+      const kind = model === "general" ? "general" : "matting";
+      const modelDir = resolveMattingModelDir(kind);
+      if (!modelDir) {
+        return res.status(400).json({
+          error: "未找到抠图模型权重",
+          hint: "请确认 models/birefnet/BiRefNet_HR-matting/model.safetensors 存在（完整版安装包已内置）",
+        });
+      }
+
+      const engine = findDepthEngine();
+      const pythonPath = path.join(ROOT, "gpu_env", "Scripts", "python.exe");
+      const scriptPath = findMattingScript();
+      // 开发环境优先用 gpu_env 里的脚本，打包版才走内置引擎
+      const useScript = Boolean(scriptPath) && existsSync(pythonPath);
+      if (!useScript && !engine) {
+        throw new Error("未找到本地推理引擎或 Python 环境，请安装完整版 Lexicona。");
+      }
+
+      // Clean up base64 prefix
+      let base64Data = image;
+      let extension = "jpg";
+      if (image.includes("base64,")) {
+        const header = image.slice(0, image.indexOf("base64,"));
+        if (header.includes("png")) extension = "png";
+        else if (header.includes("webp")) extension = "webp";
+        base64Data = image.split("base64,")[1];
+      }
+
+      const buffer = Buffer.from(base64Data, "base64");
+      const tempId = Date.now() + "_" + Math.floor(Math.random() * 1000);
+      const tempInputPath = path.join(os.tmpdir(), `matting_input_${tempId}.${extension}`);
+      const tempOutputPath = path.join(os.tmpdir(), `matting_output_${tempId}.png`);
+      writeFileSync(tempInputPath, buffer);
+
+      const resolution = Math.max(
+        256,
+        Math.min(4096, parseInt(String(size), 10) || (kind === "general" ? 1024 : 2048)),
+      );
+
+      const startedAt = Date.now();
+      const stdout = await new Promise<string>((resolve, reject) => {
+        const args = [
+          "--image",
+          tempInputPath,
+          "--model-dir",
+          modelDir,
+          "--output",
+          tempOutputPath,
+          "--size",
+          String(resolution),
+        ];
+        const program = useScript ? pythonPath : (engine as string);
+        const programArgs = useScript
+          ? [scriptPath as string, ...args]
+          : ["--task", "matte", ...args];
+        console.log(`Executing matting: ${program} ${programArgs.join(" ")}`);
+        execFile(
+          program,
+          programArgs,
+          { maxBuffer: 50 * 1024 * 1024, timeout: 10 * 60 * 1000 },
+          (error, out, err) => {
+            if (error) {
+              console.error(`Matting execution error: ${error.message}. Stderr: ${err}`);
+              return reject(new Error((err || error.message || "Matting engine failed").trim()));
+            }
+            resolve(out || "");
+          },
+        );
+      });
+
+      if (!existsSync(tempOutputPath)) {
+        throw new Error("Output matting image was not generated by script");
+      }
+
+      const outputBuffer = readFileSync(tempOutputPath);
+      const imageUrl = `data:image/png;base64,${outputBuffer.toString("base64")}`;
+
+      try {
+        if (existsSync(tempInputPath)) unlinkSync(tempInputPath);
+        if (existsSync(tempOutputPath)) unlinkSync(tempOutputPath);
+      } catch (err) {
+        console.error("Failed to delete matting temp files", err);
+      }
+
+      let meta: any = {};
+      const match = stdout.match(/RESULT (\{.*\})/);
+      if (match) {
+        try {
+          meta = JSON.parse(match[1]);
+        } catch (_) {}
+      }
+
+      res.json({
+        success: true,
+        imageUrl,
+        model: kind,
+        modelDir,
+        resolution,
+        elapsedMs: Date.now() - startedAt,
+        ...meta,
+      });
+    } catch (error: any) {
+      console.error("Matting failed:", error);
+      res.status(500).json({ error: error.message || "Internal error during matting" });
     }
   });
 

@@ -3,12 +3,13 @@ import { Gallery } from './views/Gallery';
 import { ReversePrompt } from './views/ReversePrompt';
 import { GadgetChat } from './views/GadgetChat';
 import { GadgetEditor } from './views/GadgetEditor';
+import { Matting } from './views/Matting';
 import { Gadget } from './types';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { useEffect, useState } from 'react';
 
 function AppContent() {
-  const [currentView, setCurrentView] = useState<'gallery' | 'reverse'>('gallery');
+  const [currentView, setCurrentView] = useState<'gallery' | 'reverse' | 'matting'>('gallery');
   const { activeGadget, setActiveGadget, gadgets, setGadgets } = useAppContext();
   const [editingGadget, setEditingGadget] = useState<Gadget | null | undefined>(undefined);
   const [healthIssue, setHealthIssue] = useState<string | null>(null);
@@ -66,10 +67,16 @@ function AppContent() {
       )}
       <main className={`flex-1 h-full relative transition-all duration-300 ${isSidebarOpen ? 'mr-[350px]' : ''}`}>
         <div className={currentView === 'gallery' ? 'h-full' : 'hidden'}>
-          <Gallery onOpenReverse={() => setCurrentView('reverse')} />
+          <Gallery
+            onOpenReverse={() => setCurrentView('reverse')}
+            onOpenMatting={() => setCurrentView('matting')}
+          />
         </div>
-        <div className={currentView !== 'gallery' ? 'h-full' : 'hidden'}>
+        <div className={currentView === 'reverse' ? 'h-full' : 'hidden'}>
           <ReversePrompt onClose={() => setCurrentView('gallery')} />
+        </div>
+        <div className={currentView === 'matting' ? 'h-full' : 'hidden'}>
+          <Matting onClose={() => setCurrentView('gallery')} />
         </div>
       </main>
 
