@@ -947,6 +947,8 @@ export function Matting({ onClose }: { onClose: () => void }) {
   const [pngCollage, setPngCollage] = useState(false);
   // 边缘精修只对发丝/绒毛/半透明这类软边缘有帮助，高清硬边图开启反而会发虚，默认关闭
   const [refineEdges, setRefineEdges] = useState(false);
+  // 白边/杂色清理：去掉边缘混进来的背景色与散落杂质，实测更干净，默认开启
+  const [cleanEdges, setCleanEdges] = useState(true);
   const [isBatchRunning, setIsBatchRunning] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [available, setAvailable] = useState<boolean | null>(null);
@@ -1186,8 +1188,14 @@ export function Matting({ onClose }: { onClose: () => void }) {
           ? ''
           : task.payloadUrl || (await getCompressedImageDataUrl(task.sourceUrl, 4096, 0.95));
         const requestBody = task.filePath
-          ? { filePath: task.filePath, model, size: resolution, refine: refineEdges }
-          : { image: payload, model, size: resolution, refine: refineEdges };
+          ? {
+              filePath: task.filePath,
+              model,
+              size: resolution,
+              refine: refineEdges,
+              clean: cleanEdges,
+            }
+          : { image: payload, model, size: resolution, refine: refineEdges, clean: cleanEdges };
         const response = await fetch('/api/matting', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1242,7 +1250,7 @@ export function Matting({ onClose }: { onClose: () => void }) {
         return undefined;
       }
     },
-    [model, resolution, refineEdges],
+    [model, resolution, refineEdges, cleanEdges],
   );
 
   const runAll = useCallback(async () => {
@@ -1787,15 +1795,16 @@ export function Matting({ onClose }: { onClose: () => void }) {
         <div className="flex items-center flex-wrap gap-2">
           <label
             className="flex items-center gap-1.5 text-xs text-[#7A7A7A] font-sans"
-            title="精细：人像/服装/发丝；通用：物体/场景"
+            title="人像/服饰：模特、服装、鞋包等主体，发丝与轮廓细节更好；物体/场景：家居、道具、场景照等"
           >
+            主体
             <select
               value={model}
               onChange={(event) => setModel(event.target.value as 'matting' | 'general')}
               className="text-xs border border-[#E0E0E0] bg-white rounded-none px-2 py-1.5 focus:outline-none focus:border-[#1E1E1E]"
             >
-              <option value="matting">精细</option>
-              <option value="general">通用</option>
+              <option value="matting">人像/服饰</option>
+              <option value="general">物体/场景</option>
             </select>
           </label>
           <label
@@ -1808,7 +1817,7 @@ export function Matting({ onClose }: { onClose: () => void }) {
               onChange={(event) => setPngCollage(event.target.checked)}
               className="w-3.5 h-3.5 accent-[#1E1E1E]"
             />
-            透明PNG
+            拼图PNG
           </label>
           <label
             className="flex items-center gap-1.5 text-xs text-[#7A7A7A] font-sans cursor-pointer select-none border border-[#E0E0E0] bg-white px-2 py-1.5"
@@ -1822,27 +1831,42 @@ export function Matting({ onClose }: { onClose: () => void }) {
             />
             边缘精修
           </label>
-          {/* 分辨率用字面按钮，避免裸数字看不懂 */}
-          <div
-            className="flex items-stretch border border-[#E0E0E0] bg-white text-xs font-sans"
-            title="高清=2048（边缘细节更好，约 1.1 秒/张）；快速=1024（约省一半时间，细节略软）"
+          <label
+            className="flex items-center gap-1.5 text-xs text-[#7A7A7A] font-sans cursor-pointer select-none border border-[#E0E0E0] bg-white px-2 py-1.5"
+            title="白边/杂色清理：用主体内侧颜色替换边缘混进来的背景色（去掉白边），并清掉散落的杂质与针孔；只改轮廓带，主体内部逐像素不动"
           >
-            {[
-              { value: 2048, label: '高清' },
-              { value: 1024, label: '快速' },
-            ].map((option) => (
-              <button
-                key={option.value}
-                onClick={() => setResolution(option.value)}
-                className={`px-2.5 py-1.5 transition-colors ${
-                  resolution === option.value
-                    ? 'bg-[#1E1E1E] text-white'
-                    : 'text-[#7A7A7A] hover:bg-gray-50'
-                }`}
-              >
-                {option.label}
-              </button>
-            ))}
+            <input
+              type="checkbox"
+              checked={cleanEdges}
+              onChange={(event) => setCleanEdges(event.target.checked)}
+              className="w-3.5 h-3.5 accent-[#1E1E1E]"
+            />
+            白边杂色清理
+          </label>
+          {/* 带上 2048/1024 数字，避免「高清/快速」看不出差在哪 */}
+          <div
+            className="flex items-center gap-1.5 text-xs text-[#7A7A7A] font-sans"
+            title="高清 2048：抠图时的推理分辨率更高，边缘与细节更好（约 1 秒/张）；快速 1024：耗时约减半，细节略软"
+          >
+            分辨率
+            <div className="flex items-stretch border border-[#E0E0E0] bg-white">
+              {[
+                { value: 2048, label: '高清 2048' },
+                { value: 1024, label: '快速 1024' },
+              ].map((option) => (
+                <button
+                  key={option.value}
+                  onClick={() => setResolution(option.value)}
+                  className={`px-2.5 py-1.5 transition-colors ${
+                    resolution === option.value
+                      ? 'bg-[#1E1E1E] text-white'
+                      : 'text-[#7A7A7A] hover:bg-gray-50'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
           </div>
           <button
             onClick={() => folderInputRef.current?.click()}

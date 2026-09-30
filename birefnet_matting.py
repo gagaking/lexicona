@@ -108,6 +108,7 @@ def parse_args(argv=None):
     parser.add_argument("--size", type=int, default=2048, help="Inference resolution")
     parser.add_argument("--device", default="auto", help="auto | cuda | cpu")
     parser.add_argument("--refine", type=int, default=1, help="1=边缘精修+去色，0=关闭")
+    parser.add_argument("--clean", type=int, default=0, help="1=白边/杂色清理，0=关闭")
     return parser.parse_args(argv)
 
 
@@ -122,10 +123,14 @@ def _preprocess(image, size, use_fp16, device, torch, numpy):
 
 
 REFINE_WORK_MAX = 2048  # 边缘精修的统计分辨率上限（显存与画质折中）
+CLEAN_WORK_MAX = 2048  # 白边/杂色清理的连通域统计分辨率上限
 
 
-def _matte_one(model, image, size, use_fp16, device, torch, numpy, refine):
-    """单张抠图：推理 + 归一化 + （可选）边缘精修，返回 (RGBA, 前景占比, 精修信息)。"""
+def _matte_one(model, image, size, use_fp16, device, torch, numpy, refine, clean=False):
+    """单张抠图：推理 + 归一化 + （可选）边缘精修/白边杂色清理。
+
+    返回 (RGBA, 前景占比, 精修信息, 清理信息)。
+    """
     from PIL import Image
 
     tensor = _preprocess(image, size, use_fp16, device, torch, numpy)
@@ -155,7 +160,14 @@ def _matte_one(model, image, size, use_fp16, device, torch, numpy, refine):
         rgba = image.convert("RGBA")
         rgba.putalpha(mask_image)
 
-    return rgba, float((mask > 0.5).mean()), refined
+    cleaned = None
+    if clean:
+        try:
+            rgba, cleaned = clean_alpha_rgb(rgba, numpy)
+        except Exception as exc:  # noqa: BLE001
+            print(f"WARN: 白边/杂色清理失败，保留原始结果: {exc}", flush=True)
+
+    return rgba, float((mask > 0.5).mean()), refined, cleaned
 
 
 def _box_mean(torch, functional, tensor, radius):
@@ -278,6 +290,115 @@ def refine_alpha_rgb(image, mask_lowres, device, torch, numpy, use_fp16):
     return rgba, {"radius": radius, "bandRadius": band_radius, "workSize": [work_w, work_h]}
 
 
+def clean_alpha_rgb(rgba, numpy):
+    """白边/杂色清理：去掉轮廓上的白色杂边、散落杂质与针孔。
+
+    - 杂色：低 alpha 雾状残留归零；在缩放后的二值图上做连通域统计，
+      丢掉小于阈值的孤岛、补上被主体包住的小针孔。
+    - 白边：半透明带用「内侧实心区域的平均颜色」外溢替换，把混进来的
+      背景色（白底最常见）挤掉；主体内部与全透明区域不动。
+
+    返回 (新的 RGBA, 统计信息)。异常由调用方回退到原始结果。
+    """
+    import cv2
+    from PIL import Image
+
+    width, height = rgba.size
+    pixels = numpy.asarray(rgba, dtype=numpy.uint8).astype(numpy.float32)
+    rgb = pixels[:, :, :3] / 255.0
+    alpha = pixels[:, :, 3] / 255.0
+
+    # 1) alpha 归一：雾状残留归零，实心部分固化（逐像素，不影响主体形状）
+    alpha = numpy.where(alpha < 0.04, 0.0, alpha)
+    alpha = numpy.where(alpha > 0.985, 1.0, alpha)
+
+    # 2) 散落杂质 / 针孔
+    scale = min(1.0, float(CLEAN_WORK_MAX) / float(max(width, height)))
+    work_w = max(16, int(round(width * scale)))
+    work_h = max(16, int(round(height * scale)))
+    if (work_w, work_h) != (width, height):
+        small = cv2.resize(alpha, (work_w, work_h), interpolation=cv2.INTER_AREA)
+    else:
+        small = alpha
+    binary = (small > 0.5).astype(numpy.uint8)
+    min_keep = max(12, int(round(work_w * work_h * 0.00002)))  # 2048² 下约 84px
+
+    removed = 0
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(
+        binary, connectivity=8, ltype=cv2.CV_32S
+    )
+    keep = numpy.zeros_like(binary)
+    for index in range(1, count):
+        if stats[index, cv2.CC_STAT_AREA] >= min_keep:
+            keep[labels == index] = 1
+        else:
+            removed += 1
+
+    filled = 0
+    hole_max = max(6, min_keep // 2)
+    count_holes, hole_labels, hole_stats, _ = cv2.connectedComponentsWithStats(
+        1 - binary, connectivity=8, ltype=cv2.CV_32S
+    )
+    holes = numpy.zeros_like(binary)
+    for index in range(1, count_holes):
+        left = hole_stats[index, cv2.CC_STAT_LEFT]
+        top = hole_stats[index, cv2.CC_STAT_TOP]
+        hole_w = hole_stats[index, cv2.CC_STAT_WIDTH]
+        hole_h = hole_stats[index, cv2.CC_STAT_HEIGHT]
+        # 只补被主体完全包住的小针孔，贴边的背景不算
+        if (
+            hole_stats[index, cv2.CC_STAT_AREA] <= hole_max
+            and left > 0
+            and top > 0
+            and left + hole_w < work_w
+            and top + hole_h < work_h
+        ):
+            holes[hole_labels == index] = 1
+            filled += 1
+
+    if (work_w, work_h) != (width, height):
+        keep_full = cv2.resize(
+            keep.astype(numpy.float32), (width, height), interpolation=cv2.INTER_LINEAR
+        )
+        holes_full = cv2.resize(
+            holes.astype(numpy.float32), (width, height), interpolation=cv2.INTER_LINEAR
+        )
+    else:
+        keep_full = keep.astype(numpy.float32)
+        holes_full = holes.astype(numpy.float32)
+    alpha = numpy.clip(alpha * keep_full + holes_full, 0.0, 1.0)
+
+    # 3) 白边：半透明带改用内侧实心颜色（邻域均值），把背景色挤出去
+    radius = max(2, int(round(min(width, height) / 512.0)))
+    kernel = (2 * radius + 1, 2 * radius + 1)
+    solid = (alpha > 0.75).astype(numpy.float32)
+    solid_weight = cv2.boxFilter(
+        solid, -1, kernel, normalize=True, borderType=cv2.BORDER_REPLICATE
+    )
+    color_sum = cv2.boxFilter(
+        rgb * solid[:, :, None], -1, kernel, normalize=True, borderType=cv2.BORDER_REPLICATE
+    )
+    inner = color_sum / numpy.maximum(solid_weight, 1e-3)[:, :, None]
+
+    lower = numpy.clip((alpha - 0.05) / 0.15, 0.0, 1.0)
+    upper = numpy.clip((0.92 - alpha) / 0.2, 0.0, 1.0)
+    reliable = numpy.clip(solid_weight / 0.05, 0.0, 1.0)
+    weight = lower * upper * reliable
+    # 限制单像素修正幅度，避免把噪声放大成新的杂质
+    correction = numpy.clip(inner - rgb, -0.3, 0.3)
+    rgb = numpy.clip(rgb + correction * weight[:, :, None], 0.0, 1.0)
+
+    output = numpy.concatenate(
+        [
+            (rgb * 255.0).astype(numpy.uint8),
+            (alpha * 255.0).astype(numpy.uint8)[:, :, None],
+        ],
+        axis=2,
+    )
+    cleaned = Image.fromarray(output, "RGBA")
+    return cleaned, {"radius": radius, "removedIslands": removed, "filledHoles": filled}
+
+
 def main(argv=None):
     if "--serve" in (argv if argv is not None else sys.argv[1:]):
         return serve()
@@ -310,8 +431,8 @@ def main(argv=None):
             model.half()
 
         image = open_source_image(args.image)
-        rgba, foreground, refined = _matte_one(
-            model, image, size, use_fp16, device, torch, numpy, bool(args.refine)
+        rgba, foreground, refined, cleaned = _matte_one(
+            model, image, size, use_fp16, device, torch, numpy, bool(args.refine), bool(args.clean)
         )
         rgba.save(args.output, "PNG")
 
@@ -326,6 +447,7 @@ def main(argv=None):
                     "foreground": round(foreground, 4),
                     "device": device,
                     "refined": bool(refined),
+                    "cleaned": bool(cleaned),
                 }
             ),
             flush=True,
@@ -438,11 +560,14 @@ def serve():
             refine = True
             if request.get("refine") is not None:
                 refine = bool(request.get("refine"))
+            clean = False
+            if request.get("clean") is not None:
+                clean = bool(request.get("clean"))
             for item in items:
                 started = time.time()
                 image = open_source_image(item["image"])
-                rgba, foreground, refined = _matte_one(
-                    model, image, size, use_fp16, device, torch, numpy, refine
+                rgba, foreground, refined, cleaned = _matte_one(
+                    model, image, size, use_fp16, device, torch, numpy, refine, clean
                 )
                 rgba.save(item["output"], "PNG")
                 results.append(
@@ -453,6 +578,7 @@ def serve():
                         "elapsedMs": int((time.time() - started) * 1000),
                         "foreground": round(foreground, 4),
                         "refined": bool(refined),
+                        "cleaned": bool(cleaned),
                     }
                 )
             _emit({"id": request_id, "ok": True, "results": results, "device": device})

@@ -320,6 +320,7 @@ async function runMattingBatch(payload: {
   modelDir: string;
   size: number;
   refine?: boolean;
+  clean?: boolean;
   items: Array<{ image: string; output: string }>;
 }) {
   const response = await runMattingWorkerRequest({
@@ -328,6 +329,8 @@ async function runMattingBatch(payload: {
     size: payload.size,
     // 只有显式要求精修时才开启（默认关闭）
     refine: payload.refine === true,
+    // 白边/杂色清理同样是显式开关，默认关闭
+    clean: payload.clean === true,
     items: payload.items,
   });
   return (response.results || []) as Array<{
@@ -337,6 +340,7 @@ async function runMattingBatch(payload: {
     elapsedMs: number;
     foreground: number;
     refined?: boolean;
+    cleaned?: boolean;
   }>;
 }
 
@@ -659,7 +663,7 @@ async function startServer() {
     let tempOutputPath = "";
 
     try {
-      const { image, model, size, refine } = req.body || {};
+      const { image, model, size, refine, clean } = req.body || {};
       const { filePath } = req.body || {};
       if (!image && !filePath) {
         return res.status(400).json({ error: "Missing image data" });
@@ -718,6 +722,7 @@ async function startServer() {
         modelDir,
         size: resolution,
         refine: refine === true,
+        clean: clean === true,
         items: [{ image: engineInputPath, output: tempOutputPath }],
       });
 
