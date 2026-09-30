@@ -207,44 +207,75 @@ def refine_alpha_rgb(image, mask_lowres, device, torch, numpy, use_fp16):
     source = functional.interpolate(
         mask_lowres, size=(work_h, work_w), mode="bilinear", align_corners=False
     ).float()
-    radius = max(2, int(round(min(work_w, work_h) / 256.0)))
-
+    radius = max(2, int(round(min(work_w, work_h) / 320.0)))  # 收紧邻域，减少过渡带被拓宽
     refined = _guided_filter(torch, functional, guide, source, radius, 1e-4)
 
-    # 背景色估计（用 alpha 加权模糊），用于边缘去色
+    # 基础 alpha：与"不开启精修"完全同一条路径（保证带外逐像素一致）
+    mask_np = mask_lowres[0, 0].float().cpu().numpy()
+    base_alpha_img = Image.fromarray(
+        (numpy.clip(mask_np, 0.0, 1.0) * 255.0).astype(numpy.uint8)
+    ).resize((width, height), Image.LANCZOS)
+    base_alpha = numpy.array(base_alpha_img, dtype=numpy.float32) / 255.0
+    base_tensor = torch.from_numpy(base_alpha).to(device).view(1, 1, height, width)
+
+    refined_full = functional.interpolate(
+        refined.float(), size=(height, width), mode="bilinear", align_corners=False
+    ).clamp(0.0, 1.0)
+
+    # 只在轮廓附近的窄带内采用精修结果，带外保持基础 alpha（不会整体发虚）
+    binary = (base_tensor > 0.5).float()
+    band_radius = max(2, int(round(min(width, height) / 512.0)))
+    kernel = 2 * band_radius + 1
+    outer = functional.max_pool2d(binary, kernel_size=kernel, stride=1, padding=band_radius)
+    inner = -functional.max_pool2d(-binary, kernel_size=kernel, stride=1, padding=band_radius)
+    band = (outer - inner).clamp(0.0, 1.0)
+    band = functional.avg_pool2d(
+        band, kernel_size=3, stride=1, padding=1, count_include_pad=False
+    )  # 羽化带边，避免可见接缝
+    band_strength = band * 0.7
+    alpha_full = (base_tensor * (1.0 - band_strength) + refined_full * band_strength).clamp(0.0, 1.0)
+
+    # 背景色估计（用于边缘去色）
     weight = (1.0 - source).clamp(0.0, 1.0)
     numerator = _box_mean(torch, functional, guide * weight, radius)
     denominator = _box_mean(torch, functional, weight, radius)
     background = numerator / denominator.clamp_min(1e-3)
-
-    alpha_full = Image.fromarray(
-        (refined[0, 0].float().cpu().numpy() * 255.0).astype(numpy.uint8)
-    ).resize((width, height), Image.LANCZOS)
     background_full = functional.interpolate(
         background.float(), size=(height, width), mode="bilinear", align_corners=False
     )
+    reliable_full = functional.interpolate(
+        (denominator > 0.02).float(), size=(height, width), mode="nearest"
+    )
 
-    alpha_array = numpy.array(alpha_full, dtype=numpy.float32) / 255.0
     source_pixels = torch.from_numpy(numpy.array(image, dtype=numpy.uint8)).to(device)
     output_pixels = source_pixels.clone()
     tile = 512
     for y0 in range(0, height, tile):
         y1 = min(height, y0 + tile)
-        alpha_tile = torch.from_numpy(alpha_array[y0:y1]).to(device).view(1, 1, y1 - y0, width)
+        alpha_tile = alpha_full[:, :, y0:y1, :]
         bg_tile = background_full[:, :, y0:y1, :]
+        reliable_tile = reliable_full[:, :, y0:y1, :]
         rgb_tile = source_pixels[y0:y1].permute(2, 0, 1).unsqueeze(0).float() / 255.0
-        edge = (alpha_tile > 0.03) & (alpha_tile < 0.97)
-        if bool(edge.any()):
-            foreground = (rgb_tile - (1.0 - alpha_tile) * bg_tile) / alpha_tile.clamp_min(1e-2)
-            mixed = torch.where(edge.expand_as(rgb_tile), foreground.clamp(0.0, 1.0), rgb_tile)
+        # 只在真正半透明的窄区间、且背景估计可信时才去色
+        lower = ((alpha_tile - 0.2) / 0.15).clamp(0.0, 1.0)
+        upper = ((0.9 - alpha_tile) / 0.15).clamp(0.0, 1.0)
+        edge_weight = (lower * upper * reliable_tile).clamp(0.0, 1.0)
+        if bool((edge_weight > 0.01).any()):
+            raw = (rgb_tile - (1.0 - alpha_tile) * bg_tile) / alpha_tile.clamp_min(0.2)
+            # 限制单像素修正幅度，避免小 alpha 把噪声放大成杂质
+            correction = (raw - rgb_tile).clamp(-0.25, 0.25)
+            mixed = (rgb_tile + correction * edge_weight * 0.7).clamp(0.0, 1.0)
             output_pixels[y0:y1] = (
                 (mixed[0].permute(1, 2, 0) * 255.0).clamp(0, 255).to(torch.uint8)
             )
 
     cleaned = Image.fromarray(output_pixels.cpu().numpy()).convert("RGB")
+    alpha_image = Image.fromarray(
+        (alpha_full[0, 0].float().cpu().numpy() * 255.0).astype(numpy.uint8)
+    )
     rgba = cleaned.convert("RGBA")
-    rgba.putalpha(alpha_full)
-    return rgba, {"radius": radius, "workSize": [work_w, work_h]}
+    rgba.putalpha(alpha_image)
+    return rgba, {"radius": radius, "bandRadius": band_radius, "workSize": [work_w, work_h]}
 
 
 def main(argv=None):
