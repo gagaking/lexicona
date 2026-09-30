@@ -364,8 +364,10 @@ function ComparisonCard({
   onRemove: (id: string) => void;
 }) {
   const [position, setPosition] = useState(50);
-  const [sliding, setSliding] = useState(false);
   const surfaceRef = useRef<HTMLDivElement>(null);
+  // 判断这次按下是否落在滑杆上：落在滑杆时要屏蔽卡片的原生拖拽
+  const onSliderRef = useRef(false);
+  const slidingRef = useRef(false);
 
   const updateFromX = useCallback((clientX: number) => {
     const rect = surfaceRef.current?.getBoundingClientRect();
@@ -373,26 +375,48 @@ function ComparisonCard({
     setPosition(Math.min(100, Math.max(0, ((clientX - rect.left) / rect.width) * 100)));
   }, []);
 
-  useEffect(() => {
-    if (!sliding) return;
-    const move = (event: MouseEvent) => updateFromX(event.clientX);
-    const up = () => setSliding(false);
-    window.addEventListener('mousemove', move);
-    window.addEventListener('mouseup', up);
-    return () => {
-      window.removeEventListener('mousemove', move);
-      window.removeEventListener('mouseup', up);
-    };
-  }, [sliding, updateFromX]);
+  /** 按下即同步挂监听，不依赖 React 重渲染，快速拖动也不会丢事件 */
+  const beginSlide = useCallback(
+    (clientX: number) => {
+      slidingRef.current = true;
+      updateFromX(clientX);
+      const move = (event: MouseEvent) => {
+        if (slidingRef.current) updateFromX(event.clientX);
+      };
+      const up = () => {
+        slidingRef.current = false;
+        onSliderRef.current = false;
+        window.removeEventListener('mousemove', move);
+        window.removeEventListener('mouseup', up);
+      };
+      window.addEventListener('mousemove', move);
+      window.addEventListener('mouseup', up);
+    },
+    [updateFromX],
+  );
+
+  useEffect(
+    () => () => {
+      onSliderRef.current = false;
+      slidingRef.current = false;
+    },
+    [],
+  );
 
   const status = STATUS_STYLE[task.status];
   const hasResult = task.status === 'done' && Boolean(task.resultUrl);
 
   return (
     <div
+      ref={surfaceRef}
       data-task-id={task.id}
       draggable
       onDragStart={(event) => {
+        if (onSliderRef.current) {
+          // 按在滑杆上时不允许整卡拖动（dragstart 的 target 是卡片，只能在卡片这层拦）
+          event.preventDefault();
+          return;
+        }
         try {
           event.dataTransfer?.setData(DRAG_MIME, task.id);
           if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
@@ -455,8 +479,8 @@ function ComparisonCard({
             onMouseDown={(event) => {
               event.preventDefault();
               event.stopPropagation();
-              setSliding(true);
-              updateFromX(event.clientX);
+              onSliderRef.current = true;
+              beginSlide(event.clientX);
             }}
           >
             <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-[2px] bg-white/90 shadow-[0_0_6px_rgba(0,0,0,0.45)]" />
@@ -950,6 +974,11 @@ export function Matting({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     // 进入工作台时释放上次推理残留的本地临时缓存（任务本身只存在内存里，重启即清空）
     fetch('/api/cache/clear', { method: 'POST' }).catch(() => {});
+    // 打包版下载会静默存到系统「下载」文件夹，完成后给个提示
+    const api = (window as any).electronAPI;
+    api?.onDownloadFinished?.((payload: { filename?: string }) => {
+      if (payload?.filename) setNotice(`已保存到下载文件夹：${payload.filename}`);
+    });
     fetch('/api/health')
       .then((res) => res.json())
       .then((data) => setAvailable(Boolean(data?.mattingAvailable)))
@@ -980,6 +1009,11 @@ export function Matting({ onClose }: { onClose: () => void }) {
         if (filePath) {
           // 链接式引用：只记住磁盘路径，图片本身不进内存
           const previewable = !BROWSER_PREVIEW_EXTENSIONS.includes(extension);
+          const previewUrl = previewUrlFor(filePath, extension);
+          if (!previewable) {
+            // PSD/TIFF 需要引擎合成预览图，导入就先在后台生成，等看到卡片时已经好了
+            void fetch(previewUrl).catch(() => {});
+          }
           created.push({
             id,
             name,
@@ -987,7 +1021,7 @@ export function Matting({ onClose }: { onClose: () => void }) {
             filePath,
             unsupportedPreview: !previewable,
             sourceUrl: '',
-            previewUrl: previewUrlFor(filePath, extension),
+            previewUrl,
             status: 'pending',
           });
           continue;

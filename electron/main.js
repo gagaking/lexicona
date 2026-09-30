@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, dialog, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, dialog, nativeImage, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
@@ -31,6 +31,42 @@ for (const iconPath of iconCandidates) {
 
 function getPort() {
   return parseInt(process.env.LEXICONA_PORT || '5678');
+}
+
+// 下载直接保存到系统「下载」文件夹，不再弹保存对话框
+function uniqueDownloadPath(dir, filename) {
+  const parsed = path.parse(filename || 'download');
+  let candidate = path.join(dir, filename);
+  let index = 1;
+  while (fs.existsSync(candidate)) {
+    index += 1;
+    candidate = path.join(dir, `${parsed.name}(${index})${parsed.ext}`);
+  }
+  return candidate;
+}
+
+function setupDownloads() {
+  try {
+    session.defaultSession.on('will-download', (_event, item) => {
+      try {
+        const target = uniqueDownloadPath(app.getPath('downloads'), item.getFilename());
+        item.setSavePath(target);
+        item.once('done', (_e, state) => {
+          debug(`Download ${state}: ${target}`);
+          if (state === 'completed' && mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('download-finished', {
+              filename: path.basename(target),
+              filePath: target,
+            });
+          }
+        });
+      } catch (error) {
+        debug('Download handler error: ' + error.message);
+      }
+    });
+  } catch (error) {
+    debug('will-download setup failed: ' + error.message);
+  }
 }
 
 function getClosePreference() {
@@ -240,6 +276,7 @@ Menu.setApplicationMenu(null);
 
 app.whenReady().then(async () => {
   debug('App started, isPackaged=' + app.isPackaged);
+  setupDownloads();
   if (app.isPackaged) {
     try {
       const report = diagnoseEnvironment();

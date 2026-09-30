@@ -20,4 +20,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onDiagnoseResult: (callback) => {
     ipcRenderer.on('diagnose-result', (_event, report) => callback(report));
   },
+  // 下载完成通知（打包版默认静默保存到系统下载文件夹）
+  onDownloadFinished: (callback) => {
+    ipcRenderer.on('download-finished', (_event, payload) => callback(payload));
+  },
 });

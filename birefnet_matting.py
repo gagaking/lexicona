@@ -59,7 +59,7 @@ def open_source_image(path):
 
 
 def make_preview(path, output, max_size=900, quality=88):
-    """生成预览图：PSD 优先用文件内置缩略图（快、省内存），没有再做合成图。"""
+    """生成预览图：PSD 走合成图（清晰）；只有当文件内置缩略图本身够大时才用它省时间。"""
     from PIL import Image
 
     extension = os.path.splitext(path)[1].lower()
@@ -71,10 +71,13 @@ def make_preview(path, output, max_size=900, quality=88):
             raise RuntimeError(f"缺少 psd-tools，无法预览 PSD：{exc}") from exc
         document = PSDImage.open(path)
         try:
-            image = document.thumbnail()
+            embedded = document.thumbnail()
         except Exception:  # noqa: BLE001
-            image = None
-        if image is None:
+            embedded = None
+        # 内嵌缩略图通常只有 160~256px，放大后很糊；只有它本身够大时才用
+        if embedded is not None and max(embedded.size) >= max_size:
+            image = embedded
+        else:
             image = document.composite()
         if image is None:
             raise RuntimeError("PSD 没有可用的合成图")

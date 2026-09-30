@@ -18,6 +18,7 @@ function sweepLexiconaTemp(): number {
   let removed = 0;
   // 只清理 10 分钟前的文件：避免多个实例同时运行时误删对方正在使用的临时文件
   const expireBefore = Date.now() - 10 * 60 * 1000;
+  const previewExpireBefore = Date.now() - 3 * 24 * 60 * 60 * 1000;
   try {
     const dir = os.tmpdir();
     for (const name of readdirSync(dir)) {
@@ -28,6 +29,18 @@ function sweepLexiconaTemp(): number {
         unlinkSync(fullPath);
         removed += 1;
       } catch (_) {}
+    }
+    // 预览缓存（PSD 合成图）留 3 天
+    const previewDir = path.join(dir, "lexicona-previews");
+    if (existsSync(previewDir)) {
+      for (const name of readdirSync(previewDir)) {
+        const fullPath = path.join(previewDir, name);
+        try {
+          if (statSync(fullPath).mtimeMs > previewExpireBefore) continue;
+          unlinkSync(fullPath);
+          removed += 1;
+        } catch (_) {}
+      }
     }
   } catch (_) {}
   return removed;
@@ -187,6 +200,8 @@ type MattingWorker = {
 };
 
 let mattingWorker: MattingWorker | null = null;
+/** 预览生成中的任务（同一文件同一尺寸并发请求只跑一次） */
+const previewTasks = new Map<string, Promise<string>>();
 
 function mattingWorkerCommand(): { program: string; args: string[] } | null {
   const pythonPath = path.join(ROOT, "gpu_env", "Scripts", "python.exe");
@@ -451,7 +466,8 @@ async function startServer() {
 
   // 浏览器渲染不了的格式（PSD/TIFF）由引擎生成缩略预览图
   app.get("/api/preview", async (req, res) => {
-    const { readFileSync, unlinkSync, existsSync } = await import("fs");
+    const { readFileSync, existsSync, mkdirSync, statSync } = await import("fs");
+    const crypto = await import("crypto");
     const resolved = resolveLocalImagePath((req.query as any)?.path);
     if (!resolved) {
       return res.status(404).json({ error: "文件不存在或格式不支持" });
@@ -465,29 +481,44 @@ async function startServer() {
       return res.status(500).json({ error: "未找到本地推理引擎，无法生成预览" });
     }
     const size = Math.max(120, Math.min(2000, parseInt(String((req.query as any)?.size), 10) || 900));
-    const tempOutput = path.join(os.tmpdir(), `matting_preview_${Date.now()}_${Math.floor(Math.random() * 1000)}.jpg`);
     try {
-      await runMattingWorkerRequest({
-        action: "preview",
-        maxSize: size,
-        items: [{ image: resolved, output: tempOutput }],
-      });
-      if (!existsSync(tempOutput)) {
-        throw new Error("预览图未生成");
+      // 磁盘缓存 + 并发去重：同一文件同一尺寸只生成一次，之后秒开
+      const stats = statSync(resolved);
+      const cacheKey = crypto
+        .createHash("sha1")
+        .update(`${resolved}|${stats.mtimeMs}|${stats.size}|${size}`)
+        .digest("hex")
+        .slice(0, 24);
+      const cacheDir = path.join(os.tmpdir(), "lexicona-previews");
+      const cachePath = path.join(cacheDir, `${cacheKey}.jpg`);
+
+      if (!existsSync(cachePath)) {
+        const inflight = previewTasks.get(cacheKey);
+        const task =
+          inflight ||
+          (async () => {
+            mkdirSync(cacheDir, { recursive: true });
+            await runMattingWorkerRequest({
+              action: "preview",
+              maxSize: size,
+              items: [{ image: resolved, output: cachePath }],
+            });
+            if (!existsSync(cachePath)) throw new Error("预览图未生成");
+            return cachePath;
+          })().finally(() => previewTasks.delete(cacheKey));
+        if (!inflight) previewTasks.set(cacheKey, task);
+        await task;
       }
-      const buffer = readFileSync(tempOutput);
+
+      const buffer = readFileSync(cachePath);
       res.setHeader("Content-Type", "image/jpeg");
-      res.setHeader("Cache-Control", "private, max-age=300");
+      res.setHeader("Cache-Control", "private, max-age=3600");
       res.send(buffer);
     } catch (error: any) {
       console.error("Preview failed:", error);
       if (!res.headersSent) {
         res.status(500).json({ error: error?.message || "生成预览失败" });
       }
-    } finally {
-      try {
-        if (existsSync(tempOutput)) unlinkSync(tempOutput);
-      } catch (_) {}
     }
   });
 
