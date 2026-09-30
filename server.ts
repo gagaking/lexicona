@@ -326,7 +326,8 @@ async function runMattingBatch(payload: {
     action: "matte",
     modelDir: payload.modelDir,
     size: payload.size,
-    refine: payload.refine !== false,
+    // 只有显式要求精修时才开启（默认关闭）
+    refine: payload.refine === true,
     items: payload.items,
   });
   return (response.results || []) as Array<{
@@ -716,7 +717,7 @@ async function startServer() {
       const results = await runMattingBatch({
         modelDir,
         size: resolution,
-        refine: refine !== false,
+        refine: refine === true,
         items: [{ image: engineInputPath, output: tempOutputPath }],
       });
 

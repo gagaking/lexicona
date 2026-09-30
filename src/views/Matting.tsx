@@ -945,7 +945,8 @@ export function Matting({ onClose }: { onClose: () => void }) {
   const [model, setModel] = useState<'matting' | 'general'>('matting');
   const [resolution, setResolution] = useState(2048);
   const [pngCollage, setPngCollage] = useState(false);
-  const [refineEdges, setRefineEdges] = useState(true);
+  // 边缘精修只对发丝/绒毛/半透明这类软边缘有帮助，高清硬边图开启反而会发虚，默认关闭
+  const [refineEdges, setRefineEdges] = useState(false);
   const [isBatchRunning, setIsBatchRunning] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [available, setAvailable] = useState<boolean | null>(null);
@@ -1811,7 +1812,7 @@ export function Matting({ onClose }: { onClose: () => void }) {
           </label>
           <label
             className="flex items-center gap-1.5 text-xs text-[#7A7A7A] font-sans cursor-pointer select-none border border-[#E0E0E0] bg-white px-2 py-1.5"
-            title="用原图做引导滤波精修抠图边缘并做边缘去色，减少换底时的彩边（每张多约 0.1~0.3 秒）"
+            title="仅建议抠发丝、绒毛、纱、玻璃等软边缘时开启（会在边缘做引导滤波+去色）；高清硬边图开启可能发虚并出现杂质，默认关闭"
           >
             <input
               type="checkbox"
