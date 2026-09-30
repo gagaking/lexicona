@@ -13,7 +13,7 @@ import {
   Search,
   Copy,
   Image as ImageIcon,
-  Sparkles,
+  ScanSearch,
   FilterX,
   Send,
   RefreshCw,
@@ -943,7 +943,7 @@ export function Gallery({
             title="反推解析"
             className="flex items-center justify-center px-2.5 py-1.5 text-xs font-sans font-medium bg-transparent text-[#7A7A7A] hover:text-[#1E1E1E] transition-all"
           >
-            <Sparkles className="w-4 h-4 mr-1.5" /> 反推解析
+            <ScanSearch className="w-4 h-4 mr-1.5" /> 反推
           </button>
           <button
             onClick={onOpenMatting}

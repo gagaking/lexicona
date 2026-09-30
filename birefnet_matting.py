@@ -36,6 +36,28 @@ def configure_cache_dir():
     os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
 
+def open_source_image(path):
+    """打开待抠图的源文件：普通位图用 PIL，PSD 取合成图（按平面图处理，不区分图层）。"""
+    from PIL import Image
+
+    extension = os.path.splitext(path)[1].lower()
+    if extension == ".psd":
+        try:
+            from psd_tools import PSDImage
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(f"缺少 psd-tools，无法读取 PSD：{exc}") from exc
+        document = PSDImage.open(path)
+        composite = document.composite()
+        if composite is None:
+            raise RuntimeError("PSD 没有可用的合成图（可能是纯矢量/空文档）")
+        composite = composite.convert("RGBA")
+        # 合成图如果带透明背景，铺白底后再抠图
+        flattened = Image.new("RGB", composite.size, (255, 255, 255))
+        flattened.paste(composite, mask=composite.split()[3])
+        return flattened
+    return Image.open(path).convert("RGB")
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="BiRefNet Matting Inference")
     parser.add_argument("--image", required=True, help="Path to input image")
@@ -214,7 +236,7 @@ def main(argv=None):
         if use_fp16:
             model.half()
 
-        image = Image.open(args.image).convert("RGB")
+        image = open_source_image(args.image)
         rgba, foreground, refined = _matte_one(
             model, image, size, use_fp16, device, torch, numpy, bool(args.refine)
         )
@@ -329,7 +351,7 @@ def serve():
                 refine = bool(request.get("refine"))
             for item in items:
                 started = time.time()
-                image = Image.open(item["image"]).convert("RGB")
+                image = open_source_image(item["image"])
                 rgba, foreground, refined = _matte_one(
                     model, image, size, use_fp16, device, torch, numpy, refine
                 )

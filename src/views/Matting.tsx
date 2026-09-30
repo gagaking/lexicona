@@ -4,6 +4,7 @@ import JSZip from 'jszip';
 import {
   AlertTriangle,
   ArrowLeft,
+  Archive,
   ChevronsLeftRight,
   Download,
   FolderPlus,
@@ -31,6 +32,10 @@ interface MattingTask {
   id: string;
   name: string;
   fileName: string;
+  /** 本地磁盘路径（链接式引用，Electron 下默认）；粘贴导入时为空 */
+  filePath?: string;
+  /** PSD 等浏览器无法预览的格式 */
+  unsupportedPreview?: boolean;
   sourceUrl: string;
   /** 压缩后的推理输入（首次抠图后缓存，重抠复用，避免重复编码） */
   payloadUrl?: string;
@@ -113,6 +118,35 @@ function naturalCompare(a: string, b: string) {
   return a.localeCompare(b, 'zh-Hans-CN', { numeric: true, sensitivity: 'base' });
 }
 
+/** 支持的类型：常见位图 + PSD/TIFF（浏览器预览不了的走占位图） */
+const EXTRA_IMAGE_EXTENSIONS = ['.psd', '.tif', '.tiff', '.bmp'];
+const BROWSER_PREVIEW_EXTENSIONS = ['.psd', '.tif', '.tiff'];
+
+function fileExtension(name: string) {
+  const index = name.lastIndexOf('.');
+  return index >= 0 ? name.slice(index).toLowerCase() : '';
+}
+
+function isSupportedImageFile(file: File) {
+  if (file.type.startsWith('image/')) return true;
+  return EXTRA_IMAGE_EXTENSIONS.includes(fileExtension(file.name));
+}
+
+function localFileUrl(filePath: string) {
+  return `/api/local-file?path=${encodeURIComponent(filePath)}`;
+}
+
+/** Electron 下取文件真实路径；普通浏览器返回空字符串 */
+function localPathOf(file: File) {
+  const api = (window as any).electronAPI;
+  if (!api?.getPathForFile) return '';
+  try {
+    return (api.getPathForFile(file) as string) || '';
+  } catch (_) {
+    return '';
+  }
+}
+
 function hasFiles(event: React.DragEvent) {
   return Array.from(event.dataTransfer?.types || []).includes('Files');
 }
@@ -178,7 +212,7 @@ function readDirectoryFiles(entry: any): Promise<File[]> {
             for (const item of entries) {
               if (item.isFile) {
                 const file = await readEntryFile(item);
-                if (file && file.type.startsWith('image/')) collected.push(file);
+              if (file && isSupportedImageFile(file)) collected.push(file);
               }
             }
             readBatch();
@@ -191,6 +225,31 @@ function readDirectoryFiles(entry: any): Promise<File[]> {
       resolve([]);
     }
   });
+}
+
+/** PSD/TIFF 这类浏览器解不了的格式用占位图，避免出现裂图 */
+function TaskPreview({
+  task,
+  src,
+  className,
+}: {
+  task: MattingTask;
+  src?: string;
+  className?: string;
+}) {
+  if (src) {
+    return <img src={src} alt={task.fileName} className={className} draggable={false} />;
+  }
+  return (
+    <div
+      className={`${className || ''} flex flex-col items-center justify-center gap-1 bg-[#F5F5F5] text-[#8A8A8A] font-sans`}
+    >
+      <span className="text-[10px] px-1.5 py-0.5 border border-[#DCDCDC] bg-white">
+        {fileExtension(task.fileName).replace('.', '').toUpperCase() || 'IMG'}
+      </span>
+      <span className="text-[9px] px-1 max-w-full truncate">{task.fileName}</span>
+    </div>
+  );
 }
 
 function TaskThumb({
@@ -223,7 +282,7 @@ function TaskThumb({
       } ${inert ? 'pointer-events-none' : ''}`}
       style={{ backgroundImage: CHECKERBOARD, backgroundSize: '12px 12px' }}
     >
-      <img src={image} alt={task.fileName} className="w-full h-full object-contain" draggable={false} />
+      <TaskPreview task={task} src={image} className="w-full h-full object-contain" />
       <span className={`absolute top-0.5 left-0.5 w-2 h-2 rounded-full ${status.dot} ring-1 ring-white/80`} />
       {onRemove && !inert && (
         <button
@@ -361,11 +420,10 @@ function ComparisonCard({
             draggable={false}
           />
           <div className="absolute inset-0" style={{ clipPath: `inset(0 ${100 - position}% 0 0)` }}>
-            <img
+            <TaskPreview
+              task={task}
               src={task.previewUrl}
-              alt={task.fileName}
               className="absolute inset-0 w-full h-full object-contain"
-              draggable={false}
             />
           </div>
           <div
@@ -386,12 +444,7 @@ function ComparisonCard({
           </div>
         </>
       ) : (
-        <img
-          src={task.previewUrl}
-          alt={task.fileName}
-          className="absolute inset-0 w-full h-full object-contain"
-          draggable={false}
-        />
+        <TaskPreview task={task} src={task.previewUrl} className="absolute inset-0 w-full h-full object-contain" />
       )}
 
       {task.status === 'running' && (
@@ -660,7 +713,7 @@ function GroupCard({
             />
           )}
           {group.collageStatus === 'idle' && (
-            <span className="text-[10px] text-[#A3A3A3] font-sans">点「拼图」生成 2 列上下拼合结果</span>
+            <span className="text-[10px] text-[#A3A3A3] font-sans">点「拼图」生成</span>
           )}
         </div>
         <div
@@ -780,7 +833,7 @@ function TaskLightbox({
             <>
               <img src={task.resultUrl} alt="抠图结果" className="absolute inset-0 w-full h-full object-contain" />
               <div className="absolute inset-0" style={{ clipPath: `inset(0 ${100 - position}% 0 0)` }}>
-                <img src={task.previewUrl} alt="原图" className="absolute inset-0 w-full h-full object-contain" />
+                <TaskPreview task={task} src={task.previewUrl} className="absolute inset-0 w-full h-full object-contain" />
               </div>
               <div
                 className="absolute inset-y-0 w-6 -translate-x-1/2 cursor-ew-resize"
@@ -798,7 +851,7 @@ function TaskLightbox({
               </div>
             </>
           ) : (
-            <img src={task.previewUrl} alt="原图" className="absolute inset-0 w-full h-full object-contain" />
+            <TaskPreview task={task} src={task.previewUrl} className="absolute inset-0 w-full h-full object-contain" />
           )}
           {task.status === 'running' && (
             <div className="absolute inset-0 bg-black/55 flex flex-col items-center justify-center gap-2">
@@ -910,13 +963,33 @@ export function Matting({ onClose }: { onClose: () => void }) {
     const created: MattingTask[] = [];
     for (const file of files) {
       try {
+        taskSeed += 1;
+        const id = `${Date.now()}-${taskSeed}`;
+        const name = file.name.replace(/\.[^.]+$/, '');
+        const extension = fileExtension(file.name);
+        const filePath = localPathOf(file);
+        if (filePath) {
+          // 链接式引用：只记住磁盘路径，图片本身不进内存
+          const previewable = !BROWSER_PREVIEW_EXTENSIONS.includes(extension);
+          created.push({
+            id,
+            name,
+            fileName: file.name,
+            filePath,
+            unsupportedPreview: !previewable,
+            sourceUrl: '',
+            previewUrl: previewable ? localFileUrl(filePath) : '',
+            status: 'pending',
+          });
+          continue;
+        }
         const sourceUrl = await readFileAsDataUrl(file);
         const previewUrl = await getCompressedImageDataUrl(sourceUrl, 900, 0.85);
-        taskSeed += 1;
         created.push({
-          id: `${Date.now()}-${taskSeed}`,
-          name: file.name.replace(/\.[^.]+$/, ''),
+          id,
+          name,
           fileName: file.name,
+          unsupportedPreview: BROWSER_PREVIEW_EXTENSIONS.includes(extension),
           sourceUrl,
           previewUrl,
           status: 'pending',
@@ -930,9 +1003,9 @@ export function Matting({ onClose }: { onClose: () => void }) {
 
   const addFiles = useCallback(
     async (input: FileList | File[] | null) => {
-      const files = Array.from(input || []).filter((file) => file.type.startsWith('image/'));
+      const files = Array.from(input || []).filter(isSupportedImageFile);
       if (files.length === 0) {
-        setNotice('仅支持图片文件（PNG / JPG / WebP）');
+        setNotice('仅支持 PNG / JPG / WebP / PSD');
         return;
       }
       const created = await createTasks(files);
@@ -946,9 +1019,9 @@ export function Matting({ onClose }: { onClose: () => void }) {
   /** 文件夹导入：所选文件夹内的图片不分组，一层子文件夹各自成为分组 */
   const addFromFolder = useCallback(
     async (files: File[]) => {
-      const images = files.filter((file) => file.type.startsWith('image/'));
+      const images = files.filter(isSupportedImageFile);
       if (images.length === 0) {
-        setNotice('文件夹里没有图片（PNG / JPG / WebP）');
+        setNotice('文件夹里没有可用图片');
         return;
       }
       const { rootFiles, buckets, deepIgnored } = buildGroupsFromPaths(images);
@@ -1064,13 +1137,17 @@ export function Matting({ onClose }: { onClose: () => void }) {
         prev.map((item) => (item.id === id ? { ...item, status: 'running', error: undefined } : item)),
       );
       try {
-        // 推理输入只编码一次并缓存，重抠直接复用
-        const payload =
-          task.payloadUrl || (await getCompressedImageDataUrl(task.sourceUrl, 4096, 0.95));
+        // 本地文件直接用路径推理（不读内存、不上传 base64）；粘贴的图才编码并缓存
+        const payload = task.filePath
+          ? ''
+          : task.payloadUrl || (await getCompressedImageDataUrl(task.sourceUrl, 4096, 0.95));
+        const requestBody = task.filePath
+          ? { filePath: task.filePath, model, size: resolution, refine: refineEdges }
+          : { image: payload, model, size: resolution, refine: refineEdges };
         const response = await fetch('/api/matting', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image: payload, model, size: resolution, refine: refineEdges }),
+          body: JSON.stringify(requestBody),
         });
         let data: any = null;
         try {
@@ -1610,7 +1687,7 @@ export function Matting({ onClose }: { onClose: () => void }) {
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*"
+        accept="image/*,.psd,.tif,.tiff,.bmp"
         multiple
         className="hidden"
         onChange={(event) => {
@@ -1627,7 +1704,7 @@ export function Matting({ onClose }: { onClose: () => void }) {
 
       {draggedTaskId && (
         <div className="fixed top-16 left-1/2 -translate-x-1/2 z-[150] bg-[#1E1E1E]/95 text-white px-4 py-2 text-xs font-sans shadow-xl flex items-center gap-2">
-          <GripVertical className="w-3.5 h-3.5" /> 拖到另一张卡片上合并，或拖到分组卡片里加入
+          <GripVertical className="w-3.5 h-3.5" /> 拖到其它卡片或分组即可编组
         </div>
       )}
 
@@ -1635,9 +1712,6 @@ export function Matting({ onClose }: { onClose: () => void }) {
         <div className="absolute inset-0 z-[120] bg-[#F0EEEB]/90 border-4 border-dashed border-[#1E1E1E] m-4 pointer-events-none flex flex-col items-center justify-center gap-3">
           <Upload className="w-12 h-12 text-[#1E1E1E]" />
           <p className="text-lg font-bold text-[#1E1E1E]">松开鼠标导入图片或文件夹</p>
-          <p className="text-xs text-[#7A7A7A] font-sans">
-            拖入文件夹时，文件夹内的一层子文件夹会自动成为分组
-          </p>
         </div>
       )}
 
@@ -1650,12 +1724,13 @@ export function Matting({ onClose }: { onClose: () => void }) {
               void fetch('/api/matting/release', { method: 'POST' }).catch(() => {});
               onClose();
             }}
+            title="返回图库"
             className="flex items-center text-[#7A7A7A] hover:text-[#1E1E1E] transition-colors py-1.5 px-3 -ml-3 bg-transparent rounded-none hover:bg-gray-50 border border-transparent"
           >
-            <ArrowLeft className="w-4 h-4 mr-1.5" /> 返回图库
+            <ArrowLeft className="w-4 h-4 mr-1.5" /> 返回
           </button>
           <h1 className="text-xl font-medium text-[#1E1E1E] flex items-center tracking-tight">
-            <Scissors className="w-5 h-5 mr-2" /> 抠图工作台
+            <Scissors className="w-5 h-5 mr-2" /> 抠图
           </h1>
           {tasks.length > 0 && (
             <span className="text-xs text-[#7A7A7A] font-sans">
@@ -1666,15 +1741,17 @@ export function Matting({ onClose }: { onClose: () => void }) {
         </div>
 
         <div className="flex items-center flex-wrap gap-2">
-          <label className="flex items-center gap-1.5 text-xs text-[#7A7A7A] font-sans">
-            模式
+          <label
+            className="flex items-center gap-1.5 text-xs text-[#7A7A7A] font-sans"
+            title="精细：人像/服装/发丝；通用：物体/场景"
+          >
             <select
               value={model}
               onChange={(event) => setModel(event.target.value as 'matting' | 'general')}
               className="text-xs border border-[#E0E0E0] bg-white rounded-none px-2 py-1.5 focus:outline-none focus:border-[#1E1E1E]"
             >
-              <option value="matting">精细抠图（人像/服装/发丝）</option>
-              <option value="general">通用抠图（物体/场景）</option>
+              <option value="matting">精细</option>
+              <option value="general">通用</option>
             </select>
           </label>
           <label
@@ -1687,7 +1764,7 @@ export function Matting({ onClose }: { onClose: () => void }) {
               onChange={(event) => setPngCollage(event.target.checked)}
               className="w-3.5 h-3.5 accent-[#1E1E1E]"
             />
-            PNG 拼图（透明底）
+            透明PNG
           </label>
           <label
             className="flex items-center gap-1.5 text-xs text-[#7A7A7A] font-sans cursor-pointer select-none border border-[#E0E0E0] bg-white px-2 py-1.5"
@@ -1701,15 +1778,17 @@ export function Matting({ onClose }: { onClose: () => void }) {
             />
             边缘精修
           </label>
-          <label className="flex items-center gap-1.5 text-xs text-[#7A7A7A] font-sans">
-            精度
+          <label
+            className="flex items-center gap-1.5 text-xs text-[#7A7A7A] font-sans"
+            title="抠图分辨率：2048 更精细，1024 更快"
+          >
             <select
               value={resolution}
               onChange={(event) => setResolution(parseInt(event.target.value, 10))}
               className="text-xs border border-[#E0E0E0] bg-white rounded-none px-2 py-1.5 focus:outline-none focus:border-[#1E1E1E]"
             >
-              <option value={2048}>高清 2048</option>
-              <option value={1024}>快速 1024</option>
+              <option value={2048}>2048</option>
+              <option value={1024}>1024</option>
             </select>
           </label>
           <button
@@ -1717,14 +1796,14 @@ export function Matting({ onClose }: { onClose: () => void }) {
             title="选择文件夹：文件夹内的一层子文件夹会自动识别为分组"
             className="flex items-center text-xs px-3 py-1.5 bg-white border border-[#E0E0E0] text-[#1E1E1E] hover:bg-gray-50 transition-colors rounded-none font-sans"
           >
-            <FolderPlus className="w-3.5 h-3.5 mr-1" /> 上传文件夹
+            <FolderPlus className="w-3.5 h-3.5 mr-1" /> 文件夹
           </button>
           <button
             onClick={() => fileInputRef.current?.click()}
             title="仅选择图片文件（不分组）"
             className="flex items-center text-xs px-3 py-1.5 bg-white border border-[#E0E0E0] text-[#7A7A7A] hover:bg-gray-50 transition-colors rounded-none font-sans"
           >
-            <Upload className="w-3.5 h-3.5 mr-1" /> 上传图片
+            <Upload className="w-3.5 h-3.5 mr-1" /> 图片
           </button>
           <button
             onClick={() => void downloadAll()}
@@ -1732,7 +1811,7 @@ export function Matting({ onClose }: { onClose: () => void }) {
             title="按分组下载（含拼图）与单张结果"
             className="flex items-center text-xs px-3 py-1.5 bg-white border border-[#E0E0E0] text-[#1E1E1E] hover:bg-gray-50 transition-colors rounded-none font-sans disabled:opacity-40"
           >
-            <Download className="w-3.5 h-3.5 mr-1" /> 下载全部
+            <Download className="w-3.5 h-3.5 mr-1" /> 全部
           </button>
           <button
             onClick={() => void downloadZip()}
@@ -1740,7 +1819,7 @@ export function Matting({ onClose }: { onClose: () => void }) {
             title="打包成一个 ZIP：分组目录内含拼图与「组名-序号.png」，未编组为「原名抠图.png」"
             className="flex items-center text-xs px-3 py-1.5 bg-white border border-[#E0E0E0] text-[#1E1E1E] hover:bg-gray-50 transition-colors rounded-none font-sans disabled:opacity-40"
           >
-            <FolderPlus className="w-3.5 h-3.5 mr-1" /> 打包 ZIP
+            <Archive className="w-3.5 h-3.5 mr-1" /> ZIP
           </button>
           {isBatchRunning ? (
             <button
@@ -1758,33 +1837,18 @@ export function Matting({ onClose }: { onClose: () => void }) {
             <button
               onClick={() => void runAll()}
               disabled={pendingCount === 0}
+              title="一键抠图：跑完所有待处理任务"
               className="flex items-center text-xs px-4 py-1.5 bg-[#1E1E1E] text-white hover:bg-black transition-colors rounded-none font-sans disabled:opacity-40"
             >
-              <Scissors className="w-3.5 h-3.5 mr-1" /> 一键抠图
+              <Scissors className="w-3.5 h-3.5 mr-1" /> 开始
             </button>
           )}
-          <button
-            onClick={() => {
-              groupsRef.current.forEach((group) => {
-                if (group.collageUrl) URL.revokeObjectURL(group.collageUrl);
-              });
-              tasksRef.current.forEach((task) => {
-                if (task.resultUrl) URL.revokeObjectURL(task.resultUrl);
-              });
-              setTasks([]);
-              setGroups([]);
-            }}
-            disabled={tasks.length === 0 && groups.length === 0}
-            className="flex items-center text-xs px-3 py-1.5 bg-white border border-red-200 text-red-500 hover:bg-red-50 transition-colors rounded-none font-sans disabled:opacity-40"
-          >
-            <Trash2 className="w-3.5 h-3.5 mr-1" /> 清空
-          </button>
           <button
             onClick={() => void releaseGpu()}
             title="结束常驻推理进程并释放显存（空闲 2 分钟也会自动释放；下次抠图会重新加载模型约 3 秒）"
             className="flex items-center text-xs px-3 py-1.5 bg-white border border-[#E0E0E0] text-[#7A7A7A] hover:bg-gray-50 transition-colors rounded-none font-sans"
           >
-            <RotateCcw className="w-3.5 h-3.5 mr-1" /> 释放显存
+            <RotateCcw className="w-3.5 h-3.5 mr-1" /> 释放
           </button>
         </div>
       </div>
@@ -1804,21 +1868,14 @@ export function Matting({ onClose }: { onClose: () => void }) {
               onClick={() => folderInputRef.current?.click()}
             >
               <ImageIcon className="w-14 h-14 text-[#A3A3A3] mb-4" />
-              <h3 className="text-xl font-medium text-[#1E1E1E] mb-2">上传文件夹或把图片拖到这里</h3>
-              <p className="text-xs text-[#7A7A7A] font-sans">
-                选择文件夹后，文件夹内的一层子文件夹会自动识别为分组任务；导入后点「一键抠图」
-              </p>
-              <p className="text-[11px] text-[#A3A3A3] font-sans mt-1">
-                按住任意卡片拖动即可合并编组 · 分组卡片上是「原组 | 拼图结果」6:4 宽卡
-              </p>
+              <h3 className="text-xl font-medium text-[#1E1E1E] mb-2">拖入图片、文件夹，或 Ctrl+V 粘贴</h3>
+              <p className="text-[11px] text-[#A3A3A3] font-sans mt-1">文件夹内一层子文件夹自动成为分组</p>
             </div>
           ) : (
             <div className="flex flex-col gap-3">
               <div className="flex items-center gap-2 text-xs text-[#7A7A7A] font-sans">
                 <Layers className="w-4 h-4" /> 任务（{tasks.length}）
-                <span className="text-[10px] text-[#A3A3A3]">
-                  按住卡片任意位置拖动即可合并编组 · 双击组名重命名 · 组内下载为「组名-序号」并附带拼图
-                </span>
+                <span className="text-[10px] text-[#A3A3A3]">拖卡片编组 · 双击组名改名</span>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 2xl:grid-cols-6 gap-3">
                 {groups.map((group) => {

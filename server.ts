@@ -99,6 +99,42 @@ const MATTING_FOLDERS: Record<string, string[]> = {
   general: ["BiRefNet", "BiRefNet_HR"],
 };
 
+// 允许直接按路径读取的本地文件类型（抠图输入 + 预览）
+const LOCAL_IMAGE_EXTENSIONS = [
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".webp",
+  ".bmp",
+  ".tif",
+  ".tiff",
+  ".psd",
+];
+const LOCAL_IMAGE_MIME: Record<string, string> = {
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".webp": "image/webp",
+  ".bmp": "image/bmp",
+  ".tif": "image/tiff",
+  ".tiff": "image/tiff",
+  ".psd": "image/vnd.adobe.photoshop",
+};
+
+/** 校验并解析本地图片路径，避免把任意路径当资源读取 */
+function resolveLocalImagePath(raw: unknown): string | null {
+  const value = typeof raw === "string" ? raw.trim() : "";
+  if (!value) return null;
+  const resolved = path.resolve(value);
+  if (!LOCAL_IMAGE_EXTENSIONS.includes(path.extname(resolved).toLowerCase())) return null;
+  try {
+    if (!existsSync(resolved) || !statSync(resolved).isFile()) return null;
+  } catch (_) {
+    return null;
+  }
+  return resolved;
+}
+
 function mattingRoots(): string[] {
   const roots = [path.join(ROOT, "models", "birefnet")];
   try {
@@ -391,6 +427,22 @@ async function startServer() {
     res.json({ success: true, removed });
   });
 
+  // 读取本地图片用于预览（"链接式"引用）：只允许支持的图片/PSD 与真实存在的文件
+  app.get("/api/local-file", (req, res) => {
+    const resolved = resolveLocalImagePath((req.query as any)?.path);
+    if (!resolved) {
+      return res.status(404).json({ error: "文件不存在或格式不支持" });
+    }
+    const extension = path.extname(resolved).toLowerCase();
+    res.setHeader("Content-Type", LOCAL_IMAGE_MIME[extension] || "application/octet-stream");
+    res.setHeader("Cache-Control", "private, max-age=300");
+    res.sendFile(resolved, (error) => {
+      if (error && !res.headersSent) {
+        res.status(500).json({ error: "读取本地文件失败" });
+      }
+    });
+  });
+
   // 取消当前抠图：直接结束常驻推理进程，正在跑的那张也会立刻中断
   app.post("/api/matting/cancel", (_req, res) => {
     const wasRunning = Boolean(mattingWorker);
@@ -528,8 +580,17 @@ async function startServer() {
 
     try {
       const { image, model, size, refine } = req.body || {};
-      if (!image) {
+      const { filePath } = req.body || {};
+      if (!image && !filePath) {
         return res.status(400).json({ error: "Missing image data" });
+      }
+      // 本地文件走"链接式"引用：直接用磁盘路径推理，不收 base64、不写临时文件
+      const localInput = filePath ? resolveLocalImagePath(filePath) : null;
+      if (filePath && !localInput) {
+        return res.status(400).json({
+          error: "本地文件不存在或格式不支持",
+          hint: String(filePath),
+        });
       }
 
       const kind = model === "general" ? "general" : "matting";
@@ -545,21 +606,26 @@ async function startServer() {
         throw new Error("未找到本地推理引擎或 Python 环境，请安装完整版 Lexicona。");
       }
 
-      // Clean up base64 prefix
-      let base64Data = image;
-      let extension = "jpg";
-      if (image.includes("base64,")) {
-        const header = image.slice(0, image.indexOf("base64,"));
-        if (header.includes("png")) extension = "png";
-        else if (header.includes("webp")) extension = "webp";
-        base64Data = image.split("base64,")[1];
-      }
-
-      const buffer = Buffer.from(base64Data, "base64");
       const tempId = Date.now() + "_" + Math.floor(Math.random() * 1000);
-      tempInputPath = path.join(os.tmpdir(), `matting_input_${tempId}.${extension}`);
       tempOutputPath = path.join(os.tmpdir(), `matting_output_${tempId}.png`);
-      writeFileSync(tempInputPath, buffer);
+      let engineInputPath = "";
+      if (localInput) {
+        engineInputPath = localInput;
+      } else {
+        // 粘贴/浏览器上传的图片没有磁盘路径，退回 base64 → 临时文件
+        let base64Data = image;
+        let extension = "jpg";
+        if (image.includes("base64,")) {
+          const header = image.slice(0, image.indexOf("base64,"));
+          if (header.includes("png")) extension = "png";
+          else if (header.includes("webp")) extension = "webp";
+          base64Data = image.split("base64,")[1];
+        }
+        const buffer = Buffer.from(base64Data, "base64");
+        tempInputPath = path.join(os.tmpdir(), `matting_input_${tempId}.${extension}`);
+        writeFileSync(tempInputPath, buffer);
+        engineInputPath = tempInputPath;
+      }
 
       const resolution = Math.max(
         256,
@@ -572,7 +638,7 @@ async function startServer() {
         modelDir,
         size: resolution,
         refine: refine !== false,
-        items: [{ image: tempInputPath, output: tempOutputPath }],
+        items: [{ image: engineInputPath, output: tempOutputPath }],
       });
 
       if (!existsSync(tempOutputPath)) {
