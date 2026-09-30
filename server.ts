@@ -1,8 +1,37 @@
 import { createServer } from "http";
 import express from "express";
 import path from "path";
-import { existsSync } from "fs";
+import { existsSync, readdirSync, statSync, unlinkSync } from "fs";
+import { spawn } from "child_process";
 import os from "os";
+
+// 抠图/深度推理会在系统临时目录落地输入输出文件；进程异常退出时可能残留，
+// 这里在启动时和前端进入工作台时统一清理，释放本地缓存。
+const LEXICONA_TEMP_PREFIXES = [
+  "matting_input_",
+  "matting_output_",
+  "depth_input_",
+  "depth_output_",
+];
+
+function sweepLexiconaTemp(): number {
+  let removed = 0;
+  // 只清理 10 分钟前的文件：避免多个实例同时运行时误删对方正在使用的临时文件
+  const expireBefore = Date.now() - 10 * 60 * 1000;
+  try {
+    const dir = os.tmpdir();
+    for (const name of readdirSync(dir)) {
+      if (!LEXICONA_TEMP_PREFIXES.some((prefix) => name.startsWith(prefix))) continue;
+      const fullPath = path.join(dir, name);
+      try {
+        if (statSync(fullPath).mtimeMs > expireBefore) continue;
+        unlinkSync(fullPath);
+        removed += 1;
+      } catch (_) {}
+    }
+  } catch (_) {}
+  return removed;
+}
 
 function findProjectRoot(): string {
   const markers = ["gpu_env", "models", "depth-engine", "depth-anything-v2", "run_depth_anything.py"];
@@ -107,6 +136,173 @@ function findMattingScript(): string | null {
   return candidates.find((candidate) => existsSync(candidate)) || null;
 }
 
+// ---------------------------------------------------------------------------
+// 常驻抠图进程：模型只加载一次，批量抠图不再每张都重启引擎
+// ---------------------------------------------------------------------------
+const MATTING_PROTOCOL_PREFIX = "@@LEXICONA@@";
+const MATTING_IDLE_MS = 2 * 60 * 1000;
+
+type MattingWorker = {
+  child: import("child_process").ChildProcess;
+  pending: Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>;
+  nextId: number;
+  idleTimer: NodeJS.Timeout | null;
+  stdoutBuffer: string;
+};
+
+let mattingWorker: MattingWorker | null = null;
+
+function mattingWorkerCommand(): { program: string; args: string[] } | null {
+  const pythonPath = path.join(ROOT, "gpu_env", "Scripts", "python.exe");
+  const engineScript = path.join(ROOT, "engine.py");
+  // 开发环境用 gpu_env 跑统一入口；打包版走内置引擎
+  if (existsSync(engineScript) && existsSync(pythonPath)) {
+    return { program: pythonPath, args: [engineScript, "--task", "matte", "--serve"] };
+  }
+  const engine = findDepthEngine();
+  if (engine) return { program: engine, args: ["--task", "matte", "--serve"] };
+  return null;
+}
+
+function shutdownMattingWorker(reason: string) {
+  const worker = mattingWorker;
+  if (!worker) return;
+  mattingWorker = null;
+  if (worker.idleTimer) clearTimeout(worker.idleTimer);
+  worker.pending.forEach(({ reject }) => reject(new Error(reason)));
+  worker.pending.clear();
+  try {
+    worker.child.stdin?.write(JSON.stringify({ action: "exit" }) + "\n");
+    worker.child.stdin?.end();
+  } catch (_) {}
+  const child = worker.child;
+  setTimeout(() => {
+    try {
+      child.kill();
+    } catch (_) {}
+  }, 600);
+}
+
+function scheduleMattingIdleStop() {
+  const worker = mattingWorker;
+  if (!worker) return;
+  if (worker.idleTimer) clearTimeout(worker.idleTimer);
+  worker.idleTimer = setTimeout(() => {
+    console.log("Matting worker idle, releasing GPU memory.");
+    shutdownMattingWorker("推理进程空闲超时，已释放显存");
+  }, MATTING_IDLE_MS);
+  worker.idleTimer.unref?.();
+}
+
+function ensureMattingWorker(): MattingWorker {
+  if (mattingWorker) return mattingWorker;
+  const command = mattingWorkerCommand();
+  if (!command) {
+    throw new Error("未找到本地推理引擎或 Python 环境，请安装完整版 Lexicona。");
+  }
+  const child = spawn(command.program, command.args, {
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  const worker: MattingWorker = {
+    child,
+    pending: new Map(),
+    nextId: 0,
+    idleTimer: null,
+    stdoutBuffer: "",
+  };
+  mattingWorker = worker;
+
+  child.stdout?.setEncoding("utf8");
+  child.stdout?.on("data", (chunk: string) => {
+    worker.stdoutBuffer += chunk;
+    let index = worker.stdoutBuffer.indexOf("\n");
+    while (index >= 0) {
+      const line = worker.stdoutBuffer.slice(0, index).trim();
+      worker.stdoutBuffer = worker.stdoutBuffer.slice(index + 1);
+      if (line.startsWith(MATTING_PROTOCOL_PREFIX)) {
+        try {
+          const payload = JSON.parse(line.slice(MATTING_PROTOCOL_PREFIX.length).trim());
+          if (payload.id !== undefined && payload.id !== null) {
+            const pending = worker.pending.get(payload.id);
+            if (pending) {
+              worker.pending.delete(payload.id);
+              pending.resolve(payload);
+            }
+          }
+        } catch (err) {
+          console.warn("Unparsable matting worker line:", line.slice(0, 200));
+        }
+      }
+      index = worker.stdoutBuffer.indexOf("\n");
+    }
+  });
+  child.stderr?.setEncoding("utf8");
+  child.stderr?.on("data", (chunk: string) => {
+    const text = String(chunk).trim();
+    if (text) console.log("[matting-engine]", text.slice(0, 400));
+  });
+  const handleExit = (code: number | null) => {
+    if (mattingWorker === worker) mattingWorker = null;
+    worker.pending.forEach(({ reject }) =>
+      reject(new Error(`推理进程已退出 (code ${code ?? "null"})`)),
+    );
+    worker.pending.clear();
+  };
+  child.on("exit", handleExit);
+  child.on("error", () => handleExit(null));
+  console.log("Matting worker started:", command.program, command.args.join(" "));
+  return worker;
+}
+
+// 主进程退出时顺手结束常驻推理进程，避免残留占用显存
+const killMattingWorkerOnExit = () => {
+  try {
+    mattingWorker?.child.kill();
+  } catch (_) {}
+};
+process.once("exit", killMattingWorkerOnExit);
+process.once("SIGINT", killMattingWorkerOnExit);
+process.once("SIGTERM", killMattingWorkerOnExit);
+
+async function runMattingBatch(payload: {
+  modelDir: string;
+  size: number;
+  items: Array<{ image: string; output: string }>;
+}) {
+  const worker = ensureMattingWorker();
+  if (worker.idleTimer) clearTimeout(worker.idleTimer);
+  const id = (worker.nextId += 1);
+  const response = await new Promise<any>((resolve, reject) => {
+    worker.pending.set(id, { resolve, reject });
+    try {
+      worker.child.stdin?.write(
+        JSON.stringify({
+          id,
+          action: "matte",
+          modelDir: payload.modelDir,
+          size: payload.size,
+          items: payload.items,
+        }) + "\n",
+      );
+    } catch (err) {
+      worker.pending.delete(id);
+      reject(err as Error);
+    }
+  });
+  scheduleMattingIdleStop();
+  if (!response?.ok) {
+    throw new Error(response?.error || "抠图推理失败");
+  }
+  return (response.results || []) as Array<{
+    ok: boolean;
+    width: number;
+    height: number;
+    elapsedMs: number;
+    foreground: number;
+  }>;
+}
+
 // Windows 的 TCP 保留端口段（Hyper-V/WSL）会随重启变化，落在其中的端口 listen 会报 EACCES；
 // 端口被别的进程占用时报 EADDRINUSE。两种情况都顺延到下一个可用端口。
 async function listenOnAvailablePort(app: express.Express, basePort: number, maxAttempts = 200) {
@@ -139,6 +335,12 @@ async function listenOnAvailablePort(app: express.Express, basePort: number, max
 async function startServer() {
   const app = express();
   const PORT = parseInt(process.env.PORT || "3000");
+
+  // 软件启动时清理上次运行残留的推理临时文件，释放本地缓存
+  const sweptTempFiles = sweepLexiconaTemp();
+  if (sweptTempFiles > 0) {
+    console.log(`Cleaned ${sweptTempFiles} leftover inference temp file(s)`);
+  }
 
   app.use(express.json({ limit: "200mb" }));
   
@@ -176,8 +378,29 @@ async function startServer() {
       modelPath: defaultModel,
       mattingModelDir: mattingModel,
       mattingAvailable: Boolean(mattingModel) && Boolean(engine || (existsSync(pythonPath) && mattingScript)),
+      mattingWorkerAlive: Boolean(mattingWorker),
       issues,
     });
+  });
+
+  // 释放本地推理缓存（临时输入/输出文件）
+  app.post("/api/cache/clear", (_req, res) => {
+    const removed = sweepLexiconaTemp();
+    res.json({ success: true, removed });
+  });
+
+  // 取消当前抠图：直接结束常驻推理进程，正在跑的那张也会立刻中断
+  app.post("/api/matting/cancel", (_req, res) => {
+    const wasRunning = Boolean(mattingWorker);
+    shutdownMattingWorker("已取消当前抠图任务");
+    res.json({ success: true, cancelled: wasRunning });
+  });
+
+  // 主动释放推理进程与显存（空闲 2 分钟也会自动释放）
+  app.post("/api/matting/release", (_req, res) => {
+    const wasRunning = Boolean(mattingWorker);
+    shutdownMattingWorker("已释放推理进程");
+    res.json({ success: true, released: wasRunning });
   });
 
   // API proxy route for Nvidia
@@ -207,7 +430,9 @@ async function startServer() {
   app.post("/api/depth-map", async (req, res) => {
     const { writeFileSync, unlinkSync, existsSync, readFileSync } = await import("fs");
     const { execFile } = await import("child_process");
-    
+    let tempInputPath = "";
+    let tempOutputPath = "";
+
     try {
       const { image, modelPath } = req.body;
       if (!image) {
@@ -232,8 +457,8 @@ async function startServer() {
       
       const buffer = Buffer.from(base64Data, "base64");
       const tempId = Date.now() + "_" + Math.floor(Math.random() * 1000);
-      const tempInputPath = path.join(os.tmpdir(), `depth_input_${tempId}.jpg`);
-      const tempOutputPath = path.join(os.tmpdir(), `depth_output_${tempId}.png`);
+      tempInputPath = path.join(os.tmpdir(), `depth_input_${tempId}.jpg`);
+      tempOutputPath = path.join(os.tmpdir(), `depth_output_${tempId}.png`);
       
       writeFileSync(tempInputPath, buffer);
       
@@ -280,25 +505,24 @@ async function startServer() {
       const outputBuffer = readFileSync(tempOutputPath);
       const outputBase64 = `data:image/png;base64,${outputBuffer.toString("base64")}`;
       
-      // Clean up temp files
-      try {
-        if (existsSync(tempInputPath)) unlinkSync(tempInputPath);
-        if (existsSync(tempOutputPath)) unlinkSync(tempOutputPath);
-      } catch (err) {
-        console.error("Failed to delete temp files", err);
-      }
-      
       res.json({ success: true, depthMapUrl: outputBase64 });
     } catch (error: any) {
       console.error("Depth map generation failed:", error);
       res.status(500).json({ error: error.message || "Internal error during depth map generation" });
+    } finally {
+      for (const file of [tempInputPath, tempOutputPath]) {
+        try {
+          if (file && existsSync(file)) unlinkSync(file);
+        } catch (_) {}
+      }
     }
   });
 
   // API route for local BiRefNet matting (抠图)
   app.post("/api/matting", async (req, res) => {
     const { writeFileSync, unlinkSync, existsSync, readFileSync } = await import("fs");
-    const { execFile } = await import("child_process");
+    let tempInputPath = "";
+    let tempOutputPath = "";
 
     try {
       const { image, model, size } = req.body || {};
@@ -315,12 +539,7 @@ async function startServer() {
         });
       }
 
-      const engine = findDepthEngine();
-      const pythonPath = path.join(ROOT, "gpu_env", "Scripts", "python.exe");
-      const scriptPath = findMattingScript();
-      // 开发环境优先用 gpu_env 里的脚本，打包版才走内置引擎
-      const useScript = Boolean(scriptPath) && existsSync(pythonPath);
-      if (!useScript && !engine) {
+      if (!mattingWorkerCommand()) {
         throw new Error("未找到本地推理引擎或 Python 环境，请安装完整版 Lexicona。");
       }
 
@@ -336,8 +555,8 @@ async function startServer() {
 
       const buffer = Buffer.from(base64Data, "base64");
       const tempId = Date.now() + "_" + Math.floor(Math.random() * 1000);
-      const tempInputPath = path.join(os.tmpdir(), `matting_input_${tempId}.${extension}`);
-      const tempOutputPath = path.join(os.tmpdir(), `matting_output_${tempId}.png`);
+      tempInputPath = path.join(os.tmpdir(), `matting_input_${tempId}.${extension}`);
+      tempOutputPath = path.join(os.tmpdir(), `matting_output_${tempId}.png`);
       writeFileSync(tempInputPath, buffer);
 
       const resolution = Math.max(
@@ -346,34 +565,11 @@ async function startServer() {
       );
 
       const startedAt = Date.now();
-      const stdout = await new Promise<string>((resolve, reject) => {
-        const args = [
-          "--image",
-          tempInputPath,
-          "--model-dir",
-          modelDir,
-          "--output",
-          tempOutputPath,
-          "--size",
-          String(resolution),
-        ];
-        const program = useScript ? pythonPath : (engine as string);
-        const programArgs = useScript
-          ? [scriptPath as string, ...args]
-          : ["--task", "matte", ...args];
-        console.log(`Executing matting: ${program} ${programArgs.join(" ")}`);
-        execFile(
-          program,
-          programArgs,
-          { maxBuffer: 50 * 1024 * 1024, timeout: 10 * 60 * 1000 },
-          (error, out, err) => {
-            if (error) {
-              console.error(`Matting execution error: ${error.message}. Stderr: ${err}`);
-              return reject(new Error((err || error.message || "Matting engine failed").trim()));
-            }
-            resolve(out || "");
-          },
-        );
+      // 走常驻推理进程：模型只加载一次，批量时每张只花推理时间
+      const results = await runMattingBatch({
+        modelDir,
+        size: resolution,
+        items: [{ image: tempInputPath, output: tempOutputPath }],
       });
 
       if (!existsSync(tempOutputPath)) {
@@ -383,20 +579,7 @@ async function startServer() {
       const outputBuffer = readFileSync(tempOutputPath);
       const imageUrl = `data:image/png;base64,${outputBuffer.toString("base64")}`;
 
-      try {
-        if (existsSync(tempInputPath)) unlinkSync(tempInputPath);
-        if (existsSync(tempOutputPath)) unlinkSync(tempOutputPath);
-      } catch (err) {
-        console.error("Failed to delete matting temp files", err);
-      }
-
-      let meta: any = {};
-      const match = stdout.match(/RESULT (\{.*\})/);
-      if (match) {
-        try {
-          meta = JSON.parse(match[1]);
-        } catch (_) {}
-      }
+      const meta: any = results[0] || {};
 
       res.json({
         success: true,
@@ -410,6 +593,13 @@ async function startServer() {
     } catch (error: any) {
       console.error("Matting failed:", error);
       res.status(500).json({ error: error.message || "Internal error during matting" });
+    } finally {
+      // 无论成功失败都清理临时文件，避免本地缓存堆积
+      for (const file of [tempInputPath, tempOutputPath]) {
+        try {
+          if (file && existsSync(file)) unlinkSync(file);
+        } catch (_) {}
+      }
     }
   });
 

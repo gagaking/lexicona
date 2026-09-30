@@ -23,6 +23,10 @@ def extract_task(argv):
 
 def main():
     argv = sys.argv[1:]
+    # 常驻模式：模型常驻显存，按行处理 JSON 请求（供批量抠图复用）
+    if "--serve" in argv:
+        from birefnet_matting import serve
+        return serve()
     task = extract_task(argv)
     if task == "matte":
         from birefnet_matting import main as run
