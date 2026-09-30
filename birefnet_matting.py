@@ -43,6 +43,7 @@ def parse_args(argv=None):
     parser.add_argument("--output", required=True, help="Path to save output RGBA png")
     parser.add_argument("--size", type=int, default=2048, help="Inference resolution")
     parser.add_argument("--device", default="auto", help="auto | cuda | cpu")
+    parser.add_argument("--refine", type=int, default=1, help="1=边缘精修+去色，0=关闭")
     return parser.parse_args(argv)
 
 
@@ -54,6 +55,132 @@ def _preprocess(image, size, use_fp16, device, torch, numpy):
     array = (array - mean) / std
     tensor = torch.from_numpy(array.transpose(2, 0, 1)).unsqueeze(0).to(device)
     return tensor.half() if use_fp16 else tensor
+
+
+REFINE_WORK_MAX = 2048  # 边缘精修的统计分辨率上限（显存与画质折中）
+
+
+def _matte_one(model, image, size, use_fp16, device, torch, numpy, refine):
+    """单张抠图：推理 + 归一化 + （可选）边缘精修，返回 (RGBA, 前景占比, 精修信息)。"""
+    from PIL import Image
+
+    tensor = _preprocess(image, size, use_fp16, device, torch, numpy)
+    with torch.no_grad():
+        preds = model(tensor)[-1].sigmoid().cpu().float()
+    mask = preds[0].squeeze().numpy()
+    mask = mask - mask.min()
+    peak = float(mask.max())
+    if peak > 1e-6:
+        mask = mask / peak
+    mask = numpy.clip(mask, 0.0, 1.0)
+
+    rgba = None
+    refined = None
+    if refine:
+        try:
+            mask_tensor = torch.from_numpy(mask).view(1, 1, mask.shape[0], mask.shape[1])
+            mask_tensor = mask_tensor.to(device=device, dtype=torch.float32)
+            rgba, refined = refine_alpha_rgb(image, mask_tensor, device, torch, numpy, use_fp16)
+        except Exception as exc:  # noqa: BLE001
+            print(f"WARN: 边缘精修失败，回退基础路径: {exc}", flush=True)
+
+    if rgba is None:
+        mask_image = Image.fromarray((mask * 255).astype("uint8")).resize(
+            image.size, Image.LANCZOS
+        )
+        rgba = image.convert("RGBA")
+        rgba.putalpha(mask_image)
+
+    return rgba, float((mask > 0.5).mean()), refined
+
+
+def _box_mean(torch, functional, tensor, radius):
+    kernel = 2 * radius + 1
+    return functional.avg_pool2d(
+        tensor, kernel_size=kernel, stride=1, padding=radius, count_include_pad=False
+    )
+
+
+def _guided_filter(torch, functional, guide, source, radius, eps):
+    """彩色引导图 + 灰度掩码的引导滤波（He et al.），返回精修后的掩码。"""
+    mean_i = _box_mean(torch, functional, guide, radius)
+    mean_p = _box_mean(torch, functional, source, radius)
+    corr_i = _box_mean(torch, functional, guide * guide, radius)
+    corr_ip = _box_mean(torch, functional, guide * source, radius)
+    var_i = (corr_i - mean_i * mean_i).clamp_min(0)
+    cov_ip = corr_ip - mean_i * mean_p
+    a = cov_ip / (var_i + eps)
+    b = mean_p - a * mean_i
+    a = _box_mean(torch, functional, a, radius)
+    b = _box_mean(torch, functional, b, radius)
+    refined = (a * guide + b).mean(dim=1, keepdim=True)
+    return refined.clamp(0.0, 1.0)
+
+
+def refine_alpha_rgb(image, mask_lowres, device, torch, numpy, use_fp16):
+    """把低分辨率掩码用原图做引导精修到全分辨率，并做边缘去色。
+
+    返回 (退化后的 RGBA 图像, 统计信息)。任何异常都会由调用方回退到旧路径。
+    """
+    import torch.nn.functional as functional
+    from PIL import Image
+
+    width, height = image.size
+    scale = min(1.0, float(REFINE_WORK_MAX) / float(max(width, height)))
+    work_w = max(16, int(round(width * scale)))
+    work_h = max(16, int(round(height * scale)))
+
+    guide_image = image.resize((work_w, work_h), Image.BILINEAR)
+    guide = (
+        torch.from_numpy(numpy.array(guide_image, dtype=numpy.float32) / 255.0)
+        .permute(2, 0, 1)
+        .unsqueeze(0)
+        .to(device)
+    )
+    # 统计量与滤波统一用 fp32：2048 尺度下显存只有几百 MB，换来数值稳定与更好的边缘
+    guide = guide.float()
+
+    source = functional.interpolate(
+        mask_lowres, size=(work_h, work_w), mode="bilinear", align_corners=False
+    ).float()
+    radius = max(2, int(round(min(work_w, work_h) / 256.0)))
+
+    refined = _guided_filter(torch, functional, guide, source, radius, 1e-4)
+
+    # 背景色估计（用 alpha 加权模糊），用于边缘去色
+    weight = (1.0 - source).clamp(0.0, 1.0)
+    numerator = _box_mean(torch, functional, guide * weight, radius)
+    denominator = _box_mean(torch, functional, weight, radius)
+    background = numerator / denominator.clamp_min(1e-3)
+
+    alpha_full = Image.fromarray(
+        (refined[0, 0].float().cpu().numpy() * 255.0).astype(numpy.uint8)
+    ).resize((width, height), Image.LANCZOS)
+    background_full = functional.interpolate(
+        background.float(), size=(height, width), mode="bilinear", align_corners=False
+    )
+
+    alpha_array = numpy.array(alpha_full, dtype=numpy.float32) / 255.0
+    source_pixels = torch.from_numpy(numpy.array(image, dtype=numpy.uint8)).to(device)
+    output_pixels = source_pixels.clone()
+    tile = 512
+    for y0 in range(0, height, tile):
+        y1 = min(height, y0 + tile)
+        alpha_tile = torch.from_numpy(alpha_array[y0:y1]).to(device).view(1, 1, y1 - y0, width)
+        bg_tile = background_full[:, :, y0:y1, :]
+        rgb_tile = source_pixels[y0:y1].permute(2, 0, 1).unsqueeze(0).float() / 255.0
+        edge = (alpha_tile > 0.03) & (alpha_tile < 0.97)
+        if bool(edge.any()):
+            foreground = (rgb_tile - (1.0 - alpha_tile) * bg_tile) / alpha_tile.clamp_min(1e-2)
+            mixed = torch.where(edge.expand_as(rgb_tile), foreground.clamp(0.0, 1.0), rgb_tile)
+            output_pixels[y0:y1] = (
+                (mixed[0].permute(1, 2, 0) * 255.0).clamp(0, 255).to(torch.uint8)
+            )
+
+    cleaned = Image.fromarray(output_pixels.cpu().numpy()).convert("RGB")
+    rgba = cleaned.convert("RGBA")
+    rgba.putalpha(alpha_full)
+    return rgba, {"radius": radius, "workSize": [work_w, work_h]}
 
 
 def main(argv=None):
@@ -88,27 +215,12 @@ def main(argv=None):
             model.half()
 
         image = Image.open(args.image).convert("RGB")
-        tensor = _preprocess(image, size, use_fp16, device, torch, numpy)
-
-        with torch.no_grad():
-            preds = model(tensor)[-1].sigmoid().cpu().float()
-
-        mask = preds[0].squeeze().numpy()
-        mask = mask - mask.min()
-        peak = float(mask.max())
-        if peak > 1e-6:
-            mask = mask / peak
-        mask = numpy.clip(mask, 0.0, 1.0)
-        mask_image = Image.fromarray((mask * 255).astype("uint8")).resize(
-            image.size, Image.LANCZOS
+        rgba, foreground, refined = _matte_one(
+            model, image, size, use_fp16, device, torch, numpy, bool(args.refine)
         )
-
-        rgba = image.convert("RGBA")
-        rgba.putalpha(mask_image)
         rgba.save(args.output, "PNG")
 
         elapsed_ms = int((time.time() - started) * 1000)
-        foreground = float((mask > 0.5).mean())
         print(
             "RESULT "
             + json.dumps(
@@ -118,6 +230,7 @@ def main(argv=None):
                     "elapsedMs": elapsed_ms,
                     "foreground": round(foreground, 4),
                     "device": device,
+                    "refined": bool(refined),
                 }
             ),
             flush=True,
@@ -211,23 +324,15 @@ def serve():
                 loaded_dir = model_dir
 
             results = []
+            refine = True
+            if request.get("refine") is not None:
+                refine = bool(request.get("refine"))
             for item in items:
                 started = time.time()
                 image = Image.open(item["image"]).convert("RGB")
-                tensor = _preprocess(image, size, use_fp16, device, torch, numpy)
-                with torch.no_grad():
-                    preds = model(tensor)[-1].sigmoid().cpu().float()
-                mask = preds[0].squeeze().numpy()
-                mask = mask - mask.min()
-                peak = float(mask.max())
-                if peak > 1e-6:
-                    mask = mask / peak
-                mask = numpy.clip(mask, 0.0, 1.0)
-                mask_image = Image.fromarray((mask * 255).astype("uint8")).resize(
-                    image.size, Image.LANCZOS
+                rgba, foreground, refined = _matte_one(
+                    model, image, size, use_fp16, device, torch, numpy, refine
                 )
-                rgba = image.convert("RGBA")
-                rgba.putalpha(mask_image)
                 rgba.save(item["output"], "PNG")
                 results.append(
                     {
@@ -235,7 +340,8 @@ def serve():
                         "width": image.width,
                         "height": image.height,
                         "elapsedMs": int((time.time() - started) * 1000),
-                        "foreground": round(float((mask > 0.5).mean()), 4),
+                        "foreground": round(foreground, 4),
+                        "refined": bool(refined),
                     }
                 )
             _emit({"id": request_id, "ok": True, "results": results, "device": device})

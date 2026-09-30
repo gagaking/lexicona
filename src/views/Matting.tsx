@@ -34,6 +34,8 @@ interface MattingTask {
   sourceUrl: string;
   /** 压缩后的推理输入（首次抠图后缓存，重抠复用，避免重复编码） */
   payloadUrl?: string;
+  /** 该结果是否做过边缘精修 */
+  refined?: boolean;
   previewUrl: string;
   status: MattingStatus;
   resultUrl?: string;
@@ -857,6 +859,7 @@ export function Matting({ onClose }: { onClose: () => void }) {
   const [model, setModel] = useState<'matting' | 'general'>('matting');
   const [resolution, setResolution] = useState(2048);
   const [pngCollage, setPngCollage] = useState(false);
+  const [refineEdges, setRefineEdges] = useState(true);
   const [isBatchRunning, setIsBatchRunning] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [available, setAvailable] = useState<boolean | null>(null);
@@ -1067,7 +1070,7 @@ export function Matting({ onClose }: { onClose: () => void }) {
         const response = await fetch('/api/matting', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image: payload, model, size: resolution }),
+          body: JSON.stringify({ image: payload, model, size: resolution, refine: refineEdges }),
         });
         let data: any = null;
         try {
@@ -1095,6 +1098,7 @@ export function Matting({ onClose }: { onClose: () => void }) {
               elapsedMs: data.elapsedMs,
               resolution: data.resolution,
               foreground,
+              refined: Boolean(data.refined),
               warning:
                 foreground !== undefined && foreground < 0.005
                   ? '几乎没有抠出主体，建议切换「通用抠图」或换一张图'
@@ -1117,7 +1121,7 @@ export function Matting({ onClose }: { onClose: () => void }) {
         return undefined;
       }
     },
-    [model, resolution],
+    [model, resolution, refineEdges],
   );
 
   const runAll = useCallback(async () => {
@@ -1684,6 +1688,18 @@ export function Matting({ onClose }: { onClose: () => void }) {
               className="w-3.5 h-3.5 accent-[#1E1E1E]"
             />
             PNG 拼图（透明底）
+          </label>
+          <label
+            className="flex items-center gap-1.5 text-xs text-[#7A7A7A] font-sans cursor-pointer select-none border border-[#E0E0E0] bg-white px-2 py-1.5"
+            title="用原图做引导滤波精修抠图边缘并做边缘去色，减少换底时的彩边（每张多约 0.1~0.3 秒）"
+          >
+            <input
+              type="checkbox"
+              checked={refineEdges}
+              onChange={(event) => setRefineEdges(event.target.checked)}
+              className="w-3.5 h-3.5 accent-[#1E1E1E]"
+            />
+            边缘精修
           </label>
           <label className="flex items-center gap-1.5 text-xs text-[#7A7A7A] font-sans">
             精度

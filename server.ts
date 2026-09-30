@@ -268,6 +268,7 @@ process.once("SIGTERM", killMattingWorkerOnExit);
 async function runMattingBatch(payload: {
   modelDir: string;
   size: number;
+  refine?: boolean;
   items: Array<{ image: string; output: string }>;
 }) {
   const worker = ensureMattingWorker();
@@ -282,6 +283,7 @@ async function runMattingBatch(payload: {
           action: "matte",
           modelDir: payload.modelDir,
           size: payload.size,
+          refine: payload.refine !== false,
           items: payload.items,
         }) + "\n",
       );
@@ -525,7 +527,7 @@ async function startServer() {
     let tempOutputPath = "";
 
     try {
-      const { image, model, size } = req.body || {};
+      const { image, model, size, refine } = req.body || {};
       if (!image) {
         return res.status(400).json({ error: "Missing image data" });
       }
@@ -569,6 +571,7 @@ async function startServer() {
       const results = await runMattingBatch({
         modelDir,
         size: resolution,
+        refine: refine !== false,
         items: [{ image: tempInputPath, output: tempOutputPath }],
       });
 
