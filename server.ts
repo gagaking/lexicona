@@ -307,6 +307,25 @@ async function runMattingBatch(payload: {
   refine?: boolean;
   items: Array<{ image: string; output: string }>;
 }) {
+  const response = await runMattingWorkerRequest({
+    action: "matte",
+    modelDir: payload.modelDir,
+    size: payload.size,
+    refine: payload.refine !== false,
+    items: payload.items,
+  });
+  return (response.results || []) as Array<{
+    ok: boolean;
+    width: number;
+    height: number;
+    elapsedMs: number;
+    foreground: number;
+    refined?: boolean;
+  }>;
+}
+
+/** 给常驻 worker 发一条请求（matte / preview / …），返回原始回包 */
+async function runMattingWorkerRequest(body: Record<string, unknown>) {
   const worker = ensureMattingWorker();
   if (worker.idleTimer) clearTimeout(worker.idleTimer);
   const id = (worker.nextId += 1);
@@ -314,14 +333,7 @@ async function runMattingBatch(payload: {
     worker.pending.set(id, { resolve, reject });
     try {
       worker.child.stdin?.write(
-        JSON.stringify({
-          id,
-          action: "matte",
-          modelDir: payload.modelDir,
-          size: payload.size,
-          refine: payload.refine !== false,
-          items: payload.items,
-        }) + "\n",
+        JSON.stringify({ id, ...body }) + "\n",
       );
     } catch (err) {
       worker.pending.delete(id);
@@ -330,15 +342,9 @@ async function runMattingBatch(payload: {
   });
   scheduleMattingIdleStop();
   if (!response?.ok) {
-    throw new Error(response?.error || "抠图推理失败");
+    throw new Error(response?.error || "推理失败");
   }
-  return (response.results || []) as Array<{
-    ok: boolean;
-    width: number;
-    height: number;
-    elapsedMs: number;
-    foreground: number;
-  }>;
+  return response;
 }
 
 // Windows 的 TCP 保留端口段（Hyper-V/WSL）会随重启变化，落在其中的端口 listen 会报 EACCES；
@@ -441,6 +447,48 @@ async function startServer() {
         res.status(500).json({ error: "读取本地文件失败" });
       }
     });
+  });
+
+  // 浏览器渲染不了的格式（PSD/TIFF）由引擎生成缩略预览图
+  app.get("/api/preview", async (req, res) => {
+    const { readFileSync, unlinkSync, existsSync } = await import("fs");
+    const resolved = resolveLocalImagePath((req.query as any)?.path);
+    if (!resolved) {
+      return res.status(404).json({ error: "文件不存在或格式不支持" });
+    }
+    const extension = path.extname(resolved).toLowerCase();
+    if (![".psd", ".tif", ".tiff"].includes(extension)) {
+      // 普通位图直接回源文件，浏览器自己解
+      return res.redirect(`/api/local-file?path=${encodeURIComponent(resolved)}`);
+    }
+    if (!mattingWorkerCommand()) {
+      return res.status(500).json({ error: "未找到本地推理引擎，无法生成预览" });
+    }
+    const size = Math.max(120, Math.min(2000, parseInt(String((req.query as any)?.size), 10) || 900));
+    const tempOutput = path.join(os.tmpdir(), `matting_preview_${Date.now()}_${Math.floor(Math.random() * 1000)}.jpg`);
+    try {
+      await runMattingWorkerRequest({
+        action: "preview",
+        maxSize: size,
+        items: [{ image: resolved, output: tempOutput }],
+      });
+      if (!existsSync(tempOutput)) {
+        throw new Error("预览图未生成");
+      }
+      const buffer = readFileSync(tempOutput);
+      res.setHeader("Content-Type", "image/jpeg");
+      res.setHeader("Cache-Control", "private, max-age=300");
+      res.send(buffer);
+    } catch (error: any) {
+      console.error("Preview failed:", error);
+      if (!res.headersSent) {
+        res.status(500).json({ error: error?.message || "生成预览失败" });
+      }
+    } finally {
+      try {
+        if (existsSync(tempOutput)) unlinkSync(tempOutput);
+      } catch (_) {}
+    }
   });
 
   // 取消当前抠图：直接结束常驻推理进程，正在跑的那张也会立刻中断

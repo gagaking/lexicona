@@ -58,6 +58,45 @@ def open_source_image(path):
     return Image.open(path).convert("RGB")
 
 
+def make_preview(path, output, max_size=900, quality=88):
+    """生成预览图：PSD 优先用文件内置缩略图（快、省内存），没有再做合成图。"""
+    from PIL import Image
+
+    extension = os.path.splitext(path)[1].lower()
+    image = None
+    if extension == ".psd":
+        try:
+            from psd_tools import PSDImage
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(f"缺少 psd-tools，无法预览 PSD：{exc}") from exc
+        document = PSDImage.open(path)
+        try:
+            image = document.thumbnail()
+        except Exception:  # noqa: BLE001
+            image = None
+        if image is None:
+            image = document.composite()
+        if image is None:
+            raise RuntimeError("PSD 没有可用的合成图")
+        image = image.convert("RGBA")
+        flattened = Image.new("RGB", image.size, (255, 255, 255))
+        flattened.paste(image, mask=image.split()[3])
+        image = flattened
+    else:
+        opened = Image.open(path)
+        if opened.mode in ("RGBA", "LA", "P"):
+            opened = opened.convert("RGBA")
+            flattened = Image.new("RGB", opened.size, (255, 255, 255))
+            flattened.paste(opened, mask=opened.split()[3])
+            image = flattened
+        else:
+            image = opened.convert("RGB")
+
+    image.thumbnail((max_size, max_size), Image.LANCZOS)
+    image.save(output, "JPEG", quality=quality)
+    return {"width": image.width, "height": image.height}
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="BiRefNet Matting Inference")
     parser.add_argument("--image", required=True, help="Path to input image")
@@ -315,6 +354,22 @@ def serve():
                 except Exception:
                     pass
             _emit({"id": request_id, "ok": True, "released": True})
+            continue
+
+        if action == "preview":
+            items = request.get("items") or []
+            max_size = int(request.get("maxSize") or 900)
+            if not items:
+                _emit({"id": request_id, "ok": False, "error": "缺少 items"})
+                continue
+            try:
+                previews = []
+                for item in items:
+                    meta = make_preview(item["image"], item["output"], max_size=max_size)
+                    previews.append({"ok": True, **meta})
+                _emit({"id": request_id, "ok": True, "results": previews})
+            except Exception as exc:  # noqa: BLE001
+                _emit({"id": request_id, "ok": False, "error": str(exc)})
             continue
 
         if action != "matte":

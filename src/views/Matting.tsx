@@ -13,7 +13,6 @@ import {
   Images,
   Layers,
   Loader2,
-  Maximize2,
   Pencil,
   RotateCcw,
   Scissors,
@@ -136,6 +135,14 @@ function localFileUrl(filePath: string) {
   return `/api/local-file?path=${encodeURIComponent(filePath)}`;
 }
 
+/** PSD/TIFF 浏览器解不了，交给引擎生成缩略预览 */
+function previewUrlFor(filePath: string, extension: string) {
+  if (BROWSER_PREVIEW_EXTENSIONS.includes(extension)) {
+    return `/api/preview?path=${encodeURIComponent(filePath)}&size=900`;
+  }
+  return localFileUrl(filePath);
+}
+
 /** Electron 下取文件真实路径；普通浏览器返回空字符串 */
 function localPathOf(file: File) {
   const api = (window as any).electronAPI;
@@ -237,8 +244,17 @@ function TaskPreview({
   src?: string;
   className?: string;
 }) {
-  if (src) {
-    return <img src={src} alt={task.fileName} className={className} draggable={false} />;
+  const [failed, setFailed] = useState(false);
+  if (src && !failed) {
+    return (
+      <img
+        src={src}
+        alt={task.fileName}
+        className={className}
+        draggable={false}
+        onError={() => setFailed(true)}
+      />
+    );
   }
   return (
     <div
@@ -384,6 +400,11 @@ function ComparisonCard({
         onDragStartTask(task.id);
       }}
       onDragEnd={onDragEndTask}
+      onDoubleClick={(event) => {
+        // 双击卡片放大（避开滑块与右上角按钮区）
+        if ((event.target as HTMLElement).closest('[data-no-slider]')) return;
+        onOpenDetail(task.id);
+      }}
       onDragOver={(event) => {
         if (!dragRef.current || dragRef.current === task.id) return;
         event.preventDefault();
@@ -427,6 +448,7 @@ function ComparisonCard({
             />
           </div>
           <div
+            data-no-slider
             className="absolute inset-y-0 w-5 -translate-x-1/2 cursor-ew-resize"
             style={{ left: `${position}%` }}
             title="左右拖动对比原图与结果"
@@ -477,19 +499,6 @@ function ComparisonCard({
       </div>
 
       <div data-no-slider className="absolute top-1 right-1 flex items-center gap-0.5">
-        <span
-          title="按住卡片任意位置拖动即可合并编组"
-          className="w-5 h-5 bg-white/85 border border-gray-200 flex items-center justify-center cursor-grab"
-        >
-          <GripVertical className="w-3 h-3 text-[#7A7A7A]" />
-        </span>
-        <button
-          onClick={() => onOpenDetail(task.id)}
-          title="放大查看 / 编辑"
-          className="w-5 h-5 bg-white/85 border border-gray-200 flex items-center justify-center text-[#7A7A7A] hover:text-[#1E1E1E]"
-        >
-          <Maximize2 className="w-3 h-3" />
-        </button>
         <button
           onClick={() => onDownload(task, downloadName)}
           disabled={!hasResult}
@@ -978,7 +987,7 @@ export function Matting({ onClose }: { onClose: () => void }) {
             filePath,
             unsupportedPreview: !previewable,
             sourceUrl: '',
-            previewUrl: previewable ? localFileUrl(filePath) : '',
+            previewUrl: previewUrlFor(filePath, extension),
             status: 'pending',
           });
           continue;
@@ -1884,7 +1893,7 @@ export function Matting({ onClose }: { onClose: () => void }) {
             <div className="flex flex-col gap-3">
               <div className="flex items-center gap-2 text-xs text-[#7A7A7A] font-sans">
                 <Layers className="w-4 h-4" /> 任务（{tasks.length}）
-                <span className="text-[10px] text-[#A3A3A3]">拖卡片编组 · 双击组名改名</span>
+                <span className="text-[10px] text-[#A3A3A3]">拖卡片编组 · 双击卡片放大 · 双击组名改名</span>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 2xl:grid-cols-6 gap-3">
                 {groups.map((group) => {
