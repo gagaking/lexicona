@@ -1778,19 +1778,28 @@ export function Matting({ onClose }: { onClose: () => void }) {
             />
             边缘精修
           </label>
-          <label
-            className="flex items-center gap-1.5 text-xs text-[#7A7A7A] font-sans"
-            title="抠图分辨率：2048 更精细，1024 更快"
+          {/* 分辨率用字面按钮，避免裸数字看不懂 */}
+          <div
+            className="flex items-stretch border border-[#E0E0E0] bg-white text-xs font-sans"
+            title="高清=2048（边缘细节更好，约 1.1 秒/张）；快速=1024（约省一半时间，细节略软）"
           >
-            <select
-              value={resolution}
-              onChange={(event) => setResolution(parseInt(event.target.value, 10))}
-              className="text-xs border border-[#E0E0E0] bg-white rounded-none px-2 py-1.5 focus:outline-none focus:border-[#1E1E1E]"
-            >
-              <option value={2048}>2048</option>
-              <option value={1024}>1024</option>
-            </select>
-          </label>
+            {[
+              { value: 2048, label: '高清' },
+              { value: 1024, label: '快速' },
+            ].map((option) => (
+              <button
+                key={option.value}
+                onClick={() => setResolution(option.value)}
+                className={`px-2.5 py-1.5 transition-colors ${
+                  resolution === option.value
+                    ? 'bg-[#1E1E1E] text-white'
+                    : 'text-[#7A7A7A] hover:bg-gray-50'
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
           <button
             onClick={() => folderInputRef.current?.click()}
             title="选择文件夹：文件夹内的一层子文件夹会自动识别为分组"
