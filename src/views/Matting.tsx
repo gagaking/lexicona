@@ -1423,17 +1423,6 @@ export function Matting({ onClose }: { onClose: () => void }) {
     }
   }, [downloadGroup, downloadTask, groupOfTask]);
 
-  /** 释放常驻推理进程与显存（空闲 2 分钟也会自动释放） */
-  const releaseGpu = useCallback(async () => {
-    try {
-      const response = await fetch('/api/matting/release', { method: 'POST' });
-      const data = await response.json().catch(() => null);
-      setNotice(data?.released ? '已释放显存，下次抠图会重新加载模型' : '显存已处于空闲状态');
-    } catch (_) {
-      setNotice('释放显存失败');
-    }
-  }, []);
-
   /** 一次性打包成 ZIP：分组目录内含拼图 + 组名-序号.png，未编组为 原名抠图.png */
   const downloadZip = useCallback(async () => {
     const allTasks = tasksRef.current;
@@ -1843,24 +1832,24 @@ export function Matting({ onClose }: { onClose: () => void }) {
             />
             白边杂色清理
           </label>
-          {/* 带上 2048/1024 数字，避免「高清/快速」看不出差在哪 */}
+          {/* 分辨率用低调的 tab 样式，默认高清；细节点进 tooltip 说明 */}
           <div
-            className="flex items-center gap-1.5 text-xs text-[#7A7A7A] font-sans"
-            title="高清 2048：抠图时的推理分辨率更高，边缘与细节更好（约 1 秒/张）；快速 1024：耗时约减半，细节略软"
+            className="flex items-center gap-2 text-xs font-sans"
+            title="高清（默认）：推理分辨率 2048，边缘与细节更好，约 1 秒/张；快速：1024，速度约快一倍，细节略软"
           >
-            分辨率
-            <div className="flex items-stretch border border-[#E0E0E0] bg-white">
+            <span className="text-[#7A7A7A]">分辨率</span>
+            <div className="flex items-center gap-3">
               {[
-                { value: 2048, label: '高清 2048' },
-                { value: 1024, label: '快速 1024' },
+                { value: 2048, label: '高清' },
+                { value: 1024, label: '快速' },
               ].map((option) => (
                 <button
                   key={option.value}
                   onClick={() => setResolution(option.value)}
-                  className={`px-2.5 py-1.5 transition-colors ${
+                  className={`pb-0.5 border-b-2 transition-colors ${
                     resolution === option.value
-                      ? 'bg-[#1E1E1E] text-white'
-                      : 'text-[#7A7A7A] hover:bg-gray-50'
+                      ? 'text-[#1E1E1E] border-[#1E1E1E]'
+                      : 'text-[#A0A0A0] border-transparent hover:text-[#1E1E1E]'
                   }`}
                 >
                   {option.label}
@@ -1920,13 +1909,6 @@ export function Matting({ onClose }: { onClose: () => void }) {
               <Scissors className="w-3.5 h-3.5 mr-1" /> 开始
             </button>
           )}
-          <button
-            onClick={() => void releaseGpu()}
-            title="结束常驻推理进程并释放显存（空闲 2 分钟也会自动释放；下次抠图会重新加载模型约 3 秒）"
-            className="flex items-center text-xs px-3 py-1.5 bg-white border border-[#E0E0E0] text-[#7A7A7A] hover:bg-gray-50 transition-colors rounded-none font-sans"
-          >
-            <RotateCcw className="w-3.5 h-3.5 mr-1" /> 释放
-          </button>
         </div>
       </div>
 
